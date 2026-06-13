@@ -1,0 +1,58 @@
+{
+  "name": "eclass-mcp-server",
+  "version": "0.1.0",
+  "description": "중앙대학교 eclass(LearningX/Canvas LMS)를 자연어로 다루는 MCP 서버 — 강의·과제·성적·자료/동영상 다운로드, 과제 제출, 시험 시간표, 강의계획서 조회.",
+  "type": "module",
+  "main": "dist/index.js",
+  "license": "MIT",
+  "author": "Jaeseok (@jseook11)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jseook11/eclass-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jseook11/eclass-mcp/issues"
+  },
+  "homepage": "https://github.com/jseook11/eclass-mcp#readme",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "eclass",
+    "lms",
+    "canvas",
+    "learningx",
+    "cau",
+    "중앙대학교"
+  ],
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "preinstall": "node scripts/check-node-version.mjs",
+    "build": "tsc",
+    "test": "tsx --test test/**/*.test.ts",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "setup": "tsx scripts/setup.ts",
+    "doctor": "tsx scripts/doctor.ts",
+    "discover": "tsx scripts/discover.ts",
+    "install:browser": "npx playwright install chromium",
+    "postinstall": "npm rebuild better-sqlite3 && npx playwright install chromium"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.0",
+    "better-sqlite3": "^12.9.0",
+    "playwright": "^1.59.1",
+    "yaml": "^2.8.2",
+    "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "keytar": "^7.9.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

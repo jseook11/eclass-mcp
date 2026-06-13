@@ -1,0 +1,43 @@
+# Dependencies and build outputs
+node_modules/
+dist/
+.pnpm-store/
+package-lock.json
+pnpm-lock.yaml
+
+# Local secrets and personal configuration
+.env
+.env.*
+!.env.example
+.mcp.json
+*.local
+*.log
+
+# Downloaded LMS files and caches
+files/
+
+# Local agent/workspace state
+CLAUDE.md
+Agents.md
+.claude/
+.codex/
+.context/
+.worktrees/
+
+# Documentation and private analysis notes
+# docs/ is tracked (tool/discovery guides for skill harness); other stray .md stay ignored
+*.md
+!README.md
+!docs/
+!docs/**
+# but never commit personal LMS artifacts dropped into docs/ (assignment files, etc.)
+docs/*.pdf
+docs/*.hwp
+docs/*.docx
+docs/*.pptx
+docs/*.zip
+# internal agent planning artifacts (gstack/superpowers) stay local
+docs/superpowers/
+
+# OS/editor noise
+.DS_Store

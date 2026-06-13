@@ -1,0 +1,482 @@
+강 의 계 획 서(S ylla bus )
+[1] 기본 정보(Ba s ic Inform a tion)
+■ 강의 정보(Cours e Inform a tion)
+개설년도/학기
+(Year/Semester)
+
+2026 / S
+
+교과목번호
+(Course No.)
+
+35703
+
+개설 캠퍼스
+(Campus)
+분반번호
+(Class No.)
+
+서울(S e o u l Ca m p u s )
+
+01
+
+학점
+(Credit)
+
+3
+
+교과목명
+(Course Title)
+
+경제학원론(INTRODUCTION
+TO ECONOMICS)
+
+강의시간/강의실
+(Time/Room)
+
+00 000000월4 ,5 ,6 / 화
+4,5,6 / 수4 ,5 ,6 / 목4 ,5 ,6
+/ 금4 ,5 ,6 (0 0 0 0 0 0 0 0
+MON4,5,6 / TUE4,5,6 /
+WED4,5,6 / THU4,5,6 /
+FRI4,5,6)
+
+이수구분
+(Course Classification)
+
+전공기초(b a s ic m a jo r
+course)
+
+과목구분
+(Lecture Type)
+
+단독강의(Lon e -te a c h in g
+course)
+
+강의유형
+(Course Type)
+
+이론(Th e o re tic a l c o u rs e )
+
+원어강의 여부
+(Medium of
+Instruction)
+
+대학 자체 인증 여부
+(Accreditation)
+개설대학
+(College)
+
+공학인증 여부(Accre dita tion of
+Engineering Education)
+
+e-class 활용여부
+(Usage of e-class)
+
+경영경제대학 경영학부(서
+울) 경영학(b u s in e s s
+administration)
+
+개설학과(부)
+(Department)
+
+경영경제대학(Colle g e of
+Business & Economics)
+
+유연학기
+
+No
+
+■ RISE 특화교육 연계 강의유형 (RIS E S pe cia lize d Educa tion: Cours e Type s )
+캡스톤디자인
+(Capstone Design)
+
+-
+
+프로젝트 기반
+(PBL)
+
+-
+
+-
+
+산학연계교육
+
+신산업 융복합
+
+-
+
+■ 교수자 정보(Ins tructor Inform a tion)
+교수명
+(Name)
+
+조상준(CHO S ANG JUN)
+
+연구실전화번호
+(Office Phone No.)
+
+소속
+(Department)
+
+경영학부(서울)(S c h o o l o f
+Business
+Administration)
+
+연락처
+(Contact No.)
+
+010-0000-0000
+
+E-mail 주소
+(E-mail)
+
+teacher.demo@gmail.com
+
+학과전화번호
+(Department Phone No.)
+
+02-820-0000
+
+상담가능시간
+(Office Hour)
+
+By appointment
+
+연구실위치
+(Office Location)
+
+N/A
+
+홈페이지
+(Course Web-site)
+
+N/A
+
+1/4
+
+[2] 학습 목표/성과(Le a rning Obje ctive s /Outcom e s )
+■ 과목 설명(Cours e De s cription)
+경제학은 크게 미시경제학과 거시경제학으로 나뉩니다.
+미시경제학은 개인과 기업이 격리된 시장 환경에서 결정을 내리는 방식에 관련이 있는 반면, 거시경제학은 전체 경제가 시간에 따라 어떻게 변화
+하는지 탐구합니다.
+따라서, 본 수업에서는 미시경제학과 거시경제학에서 다루는 기본 이론과 기초적인 모델에 관해 배울 것입니다.
+배우게 될 몇가지 개념을 짧게 소개하자면 다음과 같습니다:
+1. 경제의 수리적 분석: 선호도, 효용, 예산 제약, 무차별 곡선, 및 최적화.
+2. 미시경제학: 소비자의 구매선택, 상품 수요, 탄력성, 기업의 생산선택, 상품 공급, 균형점, 경쟁적 시장과 독과점 시장.
+3. 거시경제학: GDP, CPI, 인플레이션과 고용률, 경제의 장기/단기 균형점, 세금 및 재정정책.
+
+직접 제작한 강의노트를 중심으로 Zoom 실시간 강의를 진행하며 핵심 개념을 설명할것이고, 수업 중간에는 연습문제를 함께 풀어보며 이해도
+점검과 실습 중심의 학습을 병행할 예정입니다.
+일반적인 경제학원론 수업과 비교하여 조금 더 수리적 분석을 (예, 미분, 적분) 활용할 예정이니, 수강신청에 참고 바랍니다.
+
+■ 선수과목 및 공통필수과목(Pre re quis ite s a nd Co-re quis ite s )
+
+■ 학습 목표(Le a rning Obje ctive s )
+강의개요에서 언급한 주제들에 대한 이해를 목표로 할 것입니다.
+이 과정에 있어서 좀 더 능동적인 학습태도를 배양하고자 합니다.
+이 수업의 목적은 핵심 경제 원리에 대한 기본적인 이해를 제공하는 것입니다.
+강의 종료 시에 여러분은 다음을 할 수 있어야 합니다:
+1. 경제학의 기본 용어와 개념을 이해하고 편안하게 사용하기.
+2. 트레이드오프, 한계 비용 및 이익, 인센티브 등의 관점에서 경제학자처럼 사고하여 문제를 분석하기.
+3. 거시 경제의 총수요 및 총공급 모델을 구축하고 이를 사용하여 거시 경제 문제와 정책 솔루션을 설명하기
+4. 정부 정책의 영향을 예측하거나 평가하기 위해 경제적 방법을 적용하기.
+5. 국가소득 및 실업 및 인플레이션율 측정 및 계산하기
+6. 소득과 소비, 그리고 저축과 소득 간의 관계 설명하기
+7. 의사 결정과 경제적 상호 작용에 대한 지식을 활용하여 규범적인 주장을 평가하기.
+핵심을 말하자면, 미래에 경영학과 수업을 수강시 필요한 경제학 베이스를 마련하고자 합니다.
+
+■ 학습 성과(Le a rning Outcom e s )
+<AACSB Learning Goal>
+UGO 1-1 : Student will be able to understand and apply business concepts
+associated with core business areas
+UGO 4-2 : Our students will be able to employ an effective teamwork process to
+solve a decision-making business problem.
+1. 격변하는 2 1 세기 경영환경에 유연하게 대처할 수 있는 전략적 사고방식의 배양
+2. 기업외부의 환경과 기업내부의 역량을 냉철하게 분석할 수 있는 분석도구 및 기법 제공
+3. 다양한 기업 차원 및 사업단위 차원의 전략유형 소개 및 전략수립논리 제공
+
+[3] 강의 진행 정보(Cours e Me thods )
+■ 강의 진행 방식(Te aching and Le arning Me thods )
+강의 진행 방식(Te a ching a nd
+Learning Methods)
+
+추가 설명(Additional De s cription)
+
+강의(Le cture )
+
+참고도서 발행사에서 제공하는 강의자료 (PPT)를 수정하여 E-c la s s 에 배포할 예정임.
+
+강의(Le cture )
+
+강사가 직접 작성한 강의자료 (PDF) 를 E-c la s s 에 배포할 예정임.
+
+■ 과제(As s ig nm e nts )
+
+2/4
+
+■ 수업 자료(Te xtbooks , Re ading , and othe r Mate rials )
+수업 자료
+(Textbook/Referen
+ce)
+
+제목(Title )
+
+저자(Author)
+
+참고도서(Re fe re nce )
+
+맨큐의 경제학
+
+N. Gregory Mankiw
+
+출판일/게재일
+출판사/학회지
+판차사항/권
+(Year of
+(Publisher/Name 호정보(No.
+Publication/etc)
+of Journal)
+of Edition)
+Any
+
+Cengage Learning
+
+Any
+
+[4] 학습 평가 방법(S tude nt As s e s s m e nt)
+평가 항목(As s e s s m e nt
+Item)
+
+평가 비율
+(%)(Assessme
+nt Ratio)
+
+출결(Atte nda nce )
+
+5
+
+중앙대 가이드라인에 따라서 학생들의 의무적 참석을 요함.
+
+중간시험(Mid-te rm Exa m )
+
+45
+
+미시경제학의 이론적 내용들에 대한 (특히, 수리적분석) 간단한 테스트를 진행할 예
+정임.
+
+기말시험(Fina l Exa m )
+
+50
+
+거시경제학의 이론적 내용들에 대한 (특히, 개괄적 이해) 간단한 테스트를 진행할 예
+정임.
+
+추가 설명(Additional De s cription)
+
+[5] 수업 일정(Cours e S che dule )
+주(W
+강사명
+eek) (Instructor)
+
+수업주제 및 내용(Topic & Conte nt)
+
+학습과제
+추가설명 및 교수과제
+(Student
+(Additional Description &
+Assignment)
+Instructor Assignment)
+
+1
+
+조상준
+
+소비자 이론 1
+
+선호, 효용함수, 예산제약, 무차별
+곡선
+
+2
+
+조상준
+
+소비자 이론 2
+
+효용 극대화 문제와 재화의 수요
+
+3
+
+조상준
+
+수요와 탄력성
+
+수요의 가격 탄력성
+
+4
+
+조상준
+
+이윤 극대화 모형 1
+
+독과점시장과 완전경쟁 시장의 차
+이
+
+5
+
+조상준
+
+이윤 극대화 모형 2
+
+기업의 선택과 재화의 공급
+
+6
+
+조상준
+
+시장 수요와 공급
+
+수요·
+공급의 법칙, 균형 지점
+
+7
+
+조상준
+
+장기적 시장 공급
+
+장기공급곡선, 초과수요·
+초과공급
+
+8
+
+조상준
+
+중간고사
+
+9
+
+조상준
+
+노동경제학 1
+
+노동 공급: 여가와 노동의 선택
+
+10
+
+조상준
+
+노동경제학 2
+
+노동 수요: 노동생산성과 고용비
+용
+
+11
+
+조상준
+
+거시 경제학 1
+
+거시경제 데이터 (GDP, CPI, 등)
+
+12
+
+조상준
+
+거시 경제학 2
+
+장기 실물경제 1 (생산함수)
+
+13
+
+조상준
+
+거시 경제학 3
+
+장기 실물경제 2 (재무이론의 기
+초)
+
+3/4
+
+주(W
+강사명
+eek) (Instructor)
+
+수업주제 및 내용(Topic & Conte nt)
+
+학습과제
+추가설명 및 교수과제
+(Student
+(Additional Description &
+Assignment)
+Instructor Assignment)
+
+14
+
+조상준
+
+거시 경제학 4
+
+화폐와 물가 (IS -LM 모형)
+
+15
+
+조상준
+
+거시 경제학 5
+
+총 수요와 총 공급 (AD-AS 모형)
+
+16
+
+조상준
+
+기말고사
+
+[6] 수강생 학습 안내 사항(Guide to Le a rning )
+수업의 내용에 관해서:
+중간고사 까지는 기초 경제수학과 미시경제학 부분을 다룰 것이며,
+기말고사 까지는 거시경제학 부분을 다룰 예정입니다.
+시험 방법에 관해서:
+기말고사는 중간고사까지 다룬 내용을 제외한 부분까지 시험범위에 포함되며,
+중간고사와 기말고사 모두 전자기기를 제외한 모든 자료 (강의자료, PPT, 개인노트 등등) 을 허용할 것입니다.
+전반적인 팁:
+주교재를 (국문이든 영어든) 꼭 구매할 필요는 없습니다.
+E-class를 통하여 제공되는 강의자료들에 집중을 할 필요가 있습니다.
+강의진행에 관한 자세한 사항은 첫수업에 조금 더 명확하게 할 것이며,
+수업의 페이스나 난이도와 같은 경우에는 수강자들의 의견을 적극적으로 수용할 예정이니,
+저와 E-m a il을 통해 소통하는 것을 권장합니다.
+또한 강의진행 스케쥴을 엑셀파일로 E-c la s s 에 업로드 할 것입니다.
+강의개요에서 언급하였듯, 일반적인 경제학원론 수업과 비교하여 조금 더 수리적 분석을 활용할 예정이고,
+전문용어나 강사가 제공하는 자료 중 일부는 영어로 쓰여져 있으니, 수강신청시 참고하기를 바랍니다.
+
+기출문제(Pre vious Exa m S a m ple s )
+
+<추가 자료 다운로드> (< Downloa d Additiona l S a m ple > )
+
+※ 시험 부정 행위 적발 시 중앙대학교 학칙 제7 1 조【징계】및 학사운영규정Ⅰ제 6 장 제 4 7 조 【시험 부정행위자의
+처벌 】에 따라 징계 처분 대상이 될 수 있습니다.
+(※ In pursuant to the Article 71 “
+Discipline”of the Chung-Ang University Regulations, and Article 47
+“Punishment for Cheating during Examination”under Chapter 6 of the Academic Affairs Management Rules,
+any student caught engaging in academic misconduct during an exam will be subject to disciplinary action.)
+본 수업을 수강하는 장애학생은 장애유형 및 정도에 따라 정당한 편의지원을 받을 수 있습니다. 이와 관련하여 아래와 같은 편의제공이 필요한 경우, 장애학생지원센터에
+문의해 주시기 바랍니다.
+1. 시각장애 : 점자, 확대자료, 파일자료, 대필도우미 배치, 평가방법 조정 등
+2. 청각장애 : 대필도우미, 속기사 배치, 평가방법 조정 등
+3. 지체/뇌병변장애 : 휠체어접근이 가능한 강의실 제공, 대필도우미 배치, 평가방법 조정 등
+4. 기타 정신적 장애, 건강장애의 경우 장애학생지원센터 상담 후 지원
+※ 문의처 : 02-820-6577~9(서울캠퍼스), 031-670-4816(안성캠퍼스)
+장애학생지원센터 카카오톡 플러스친구(중앙대학교 장애학생지원센터 또는 c a u a b le )
+In this class, students with disabilities are eligible for reasonable accommodations depending on the type and severity of disability. If you wish to receive
+accommodations listed below, please contact the Support Center for Students with Disabilities.
+1. Visual Impairment: Braille, large print, electronic class materials, volunteer note-taker, adjustments in assessment practices, etc.
+2. Hearing Impairment: Volunteer note-taker, stenographer, adjustments in assessment practices, etc.
+3. Physical Disabilities/Brain Lesions: Classrooms with wheelchair access, volunteer note-taker, adjustments in assessment practices, etc.
+4. Accommodations for students with other psychiatric disabilities or health impairments can be arranged through the Support Center for Students with
+Disabilities after consultation.
+※ Inquiry: 02-820-6577~9 (Seoul Campus), 031-670-4816 (Anseong Campus)
+- KakaoTalk Plus Friend ID: @cauable
+
+4/4
+
+
