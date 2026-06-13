@@ -1,5 +1,9 @@
 # eclass-mcp
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-24.x-339933?logo=node.js&logoColor=white)](.nvmrc)
+[![MCP](https://img.shields.io/badge/MCP-server-6E40C9)](https://modelcontextprotocol.io)
+
 중앙대학교 eclass(LearningX / Canvas LMS)를 Claude·Codex 등 MCP 클라이언트에서
 자연어로 다루게 해주는 **MCP 서버**입니다. 강의·과제·성적 조회부터 자료/동영상
 다운로드, 과제 제출, **기말시험 시간표 조회**, **강의계획서(syllabus) 검색·조회**까지
@@ -124,3 +128,11 @@ pnpm run discover # 엔드포인트 디스커버리 (docs/DISCOVERY.md)
 - [`docs/TOOLS.md`](docs/TOOLS.md) — 전체 도구 명세 및 사용 흐름
 - [`docs/DISCOVERY.md`](docs/DISCOVERY.md) — eclass API 엔드포인트 디스커버리
 - [`docs/SELF_REPAIR.md`](docs/SELF_REPAIR.md) — 시험 파서 등 자가 점검·복구 절차
+
+## 라이선스
+
+[MIT](LICENSE) © Jaeseok
+
+CAU(중앙대학교) eclass 전용 비공식 도구입니다. 본인 계정으로 본인의 학습 데이터에만
+사용하세요. 이 소프트웨어 사용으로 발생하는 결과(LMS 이용약관·학칙 위반 등)에 대한
+책임은 사용자 본인에게 있으며, 저자는 어떠한 보증도 하지 않습니다.
