@@ -216,6 +216,19 @@ pnpm run discover # 엔드포인트 디스커버리 (docs/DISCOVERY.md)
 - [`docs/DISCOVERY.md`](docs/DISCOVERY.md) — eclass API 엔드포인트 디스커버리
 - [`docs/SELF_REPAIR.md`](docs/SELF_REPAIR.md) — 시험 파서 등 자가 점검·복구 절차
 
+## Claude Code 스킬 (선택)
+
+MCP 툴을 정해진 순서로 조합하도록 안내하는 `eclass-cau` 스킬이 `skills/`에 동봉돼
+있습니다. Claude Code에서 활성화하려면:
+
+```bash
+npm run install:skill
+```
+
+`~/.claude/skills/eclass-cau`를 이 repo로 심볼릭 링크하므로, `git pull`로 repo를
+업데이트하면 스킬도 자동으로 최신 상태가 됩니다. (스킬 본문은 흐름·순서만 담고,
+파라미터 명세는 `docs/TOOLS.md`를 그대로 가리킵니다.)
+
 ## 라이선스
 
 [MIT](LICENSE) © Jaeseok
