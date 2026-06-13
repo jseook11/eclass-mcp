@@ -9,15 +9,15 @@ course 매치·자료 탐색 단계를 건너뛰지 않는다.
 2. 사용자가 말한 강의명을 목록과 매치해 `course_id`를 정한다. 모호하면 후보를
    보여주고 사용자가 고르게 한다 (추측 금지).
 3. `eclass_get_materials { course_id }`로 자료 위치/목록을 탐색한다.
-4. 결과에서 `is_downloaded: false`이고 동영상이 아닌 항목만 골라
-   `eclass_download_materials_batch`에 한 번에 넘긴다 (각 항목의 `source`도 함께 전달).
-   동영상 항목은 "동영상 다운로드" 흐름으로 보낸다.
+4. 결과에서 `is_downloaded: false`인 항목을 `eclass_download_materials_batch`에
+   넘긴다 (각 항목의 `source`도 함께 전달). 영상 항목은 배치가 거부하며
+   `eclass_download_video`를 안내하므로, 그 항목은 "동영상 다운로드" 흐름으로 받는다.
 
 ## 동영상 다운로드
 
 1~3. "자료 다운로드"의 1~3단계와 동일하게 `course_id`와 자료 목록 확보.
-4. `type`이 mp4/video 계열이고 `url`이 `https://ocs.cau.ac.kr/em/...`인 항목을
-   `eclass_download_video`로 다운로드한다.
+4. 대상 자료를 `eclass_download_video`로 다운로드한다. (영상 판별·URL 형식은
+   서버가 처리하므로 직접 판단하지 않는다.)
 
 ## 마감 임박 과제
 
