@@ -23,6 +23,7 @@ Agents.md
 .codex/
 .context/
 .worktrees/
+_workspace/
 
 # Documentation and private analysis notes
 # docs/ is tracked (tool/discovery guides for skill harness); other stray .md stay ignored
