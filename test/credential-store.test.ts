@@ -15,6 +15,7 @@ import {
   encryptSecretFile,
   decryptSecretFile,
   resolveMasterKey,
+  resolveBackend,
 } from '../src/credential-store.js';
 
 test('credential store falls back to a 0600 file store', async () => {
@@ -95,4 +96,49 @@ test('resolveMasterKey returns null when no key injected', async () => {
   delete process.env[SECRET_KEY_ENV];
   delete process.env[SECRET_KEY_FILE_ENV];
   assert.equal(await resolveMasterKey(), null);
+});
+
+test('encrypted backend stores ciphertext and round-trips via get/set', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-enc-'));
+  const encPath = path.join(dir, 'secrets.enc');
+  process.env[CREDENTIAL_BACKEND_ENV] = 'encrypted';
+  process.env[ENC_STORE_PATH_ENV] = encPath;
+  process.env[SECRET_KEY_ENV] = crypto.randomBytes(32).toString('base64');
+  try {
+    const backend = await setCredential('eclass-mcp', 'alice', 's3cret');
+    assert.equal(backend, 'encrypted');
+    const onDisk = await fs.readFile(encPath, 'utf8');
+    assert.ok(!onDisk.includes('s3cret'));
+    assert.match(onDisk, /"iv"/);
+    assert.equal(await getCredential('eclass-mcp', 'alice'), 's3cret');
+    const stat = await fs.stat(encPath);
+    if (os.platform() !== 'win32') assert.equal(stat.mode & 0o777, 0o600);
+  } finally {
+    delete process.env[CREDENTIAL_BACKEND_ENV];
+    delete process.env[ENC_STORE_PATH_ENV];
+    delete process.env[SECRET_KEY_ENV];
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('explicit encrypted backend without a key throws (no silent fallback)', async () => {
+  process.env[CREDENTIAL_BACKEND_ENV] = 'encrypted';
+  delete process.env[SECRET_KEY_ENV];
+  delete process.env[SECRET_KEY_FILE_ENV];
+  try {
+    await assert.rejects(() => resolveBackend(), /master key/);
+  } finally {
+    delete process.env[CREDENTIAL_BACKEND_ENV];
+  }
+});
+
+test('auto backend selects encrypted when a master key is present', async () => {
+  delete process.env[CREDENTIAL_BACKEND_ENV];
+  process.env[SECRET_KEY_ENV] = crypto.randomBytes(32).toString('base64');
+  try {
+    const { backend } = await resolveBackend();
+    assert.equal(backend, 'encrypted');
+  } finally {
+    delete process.env[SECRET_KEY_ENV];
+  }
 });

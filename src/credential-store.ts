@@ -12,7 +12,7 @@ export const ENC_STORE_PATH_ENV = 'ECLASS_ENC_STORE_PATH';
 export const SECRET_KEY_ENV = 'ECLASS_SECRET_KEY';
 export const SECRET_KEY_FILE_ENV = 'ECLASS_SECRET_KEY_FILE';
 
-export type CredentialBackend = 'keytar' | 'file';
+export type CredentialBackend = 'keytar' | 'file' | 'encrypted';
 
 type KeytarModule = {
   getPassword(service: string, account: string): Promise<string | null>;
@@ -67,12 +67,16 @@ export async function resolveMasterKey(): Promise<Buffer | null> {
 }
 
 let keytarLoad: Promise<KeytarModule | null> | null = null;
+let keytarLoadError: string | null = null;
 
 async function loadKeytar(): Promise<KeytarModule | null> {
   if (process.env[CREDENTIAL_BACKEND_ENV] === 'file') return null;
   keytarLoad ??= import('keytar')
     .then((mod) => (mod.default ?? mod) as KeytarModule)
-    .catch(() => null);
+    .catch((err) => {
+      keytarLoadError = err instanceof Error ? err.message : String(err);
+      return null;
+    });
   return keytarLoad;
 }
 
@@ -110,20 +114,79 @@ async function writeSecretFile(file: SecretFile): Promise<void> {
   }
 }
 
+function getEncStorePath(): string {
+  return expandTilde(process.env[ENC_STORE_PATH_ENV] ?? DEFAULT_ENC_STORE_PATH);
+}
+
+async function readEncFile(key: Buffer): Promise<SecretFile> {
+  try {
+    const raw = await fs.readFile(getEncStorePath(), 'utf8');
+    const enc = JSON.parse(raw) as EncFile;
+    return decryptSecretFile(key, enc);
+  } catch (err) {
+    if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') return {};
+    throw err;
+  }
+}
+
+async function writeEncFile(key: Buffer, data: SecretFile): Promise<void> {
+  const storePath = getEncStorePath();
+  await fs.mkdir(path.dirname(storePath), { recursive: true, mode: 0o700 });
+  const tmpPath = path.join(
+    path.dirname(storePath),
+    `.${path.basename(storePath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  await fs.writeFile(tmpPath, JSON.stringify(encryptSecretFile(key, data), null, 2) + '\n', {
+    mode: 0o600,
+  });
+  await fs.rename(tmpPath, storePath);
+  if (os.platform() !== 'win32') await fs.chmod(storePath, 0o600);
+}
+
+export async function resolveBackend(): Promise<{ backend: CredentialBackend; reason: string }> {
+  const explicit = process.env[CREDENTIAL_BACKEND_ENV];
+  if (explicit === 'encrypted') {
+    if (!(await resolveMasterKey())) {
+      throw new Error(
+        `${CREDENTIAL_BACKEND_ENV}=encrypted but no master key (set ${SECRET_KEY_ENV} or ${SECRET_KEY_FILE_ENV})`,
+      );
+    }
+    return { backend: 'encrypted', reason: 'explicit' };
+  }
+  if (explicit === 'keytar') {
+    if (!(await loadKeytar())) {
+      throw new Error(
+        `${CREDENTIAL_BACKEND_ENV}=keytar but keytar is unavailable: ${keytarLoadError ?? 'load failed'}`,
+      );
+    }
+    return { backend: 'keytar', reason: 'explicit' };
+  }
+  if (explicit === 'file') return { backend: 'file', reason: 'explicit' };
+  // auto
+  if (await resolveMasterKey()) return { backend: 'encrypted', reason: 'auto: master key present' };
+  if (await loadKeytar()) return { backend: 'keytar', reason: 'auto: keytar available' };
+  return { backend: 'file', reason: 'auto: no key and keytar unavailable' };
+}
+
 export async function getCredentialBackend(): Promise<CredentialBackend> {
-  return (await loadKeytar()) ? 'keytar' : 'file';
+  return (await resolveBackend()).backend;
 }
 
 export async function getCredential(service: string, account: string): Promise<string | null> {
-  const keytar = await loadKeytar();
-  if (keytar) {
+  const { backend } = await resolveBackend();
+  if (backend === 'encrypted') {
+    const key = (await resolveMasterKey())!;
+    const file = await readEncFile(key);
+    return file[encodeKey(service)]?.[encodeKey(account)] ?? null;
+  }
+  if (backend === 'keytar') {
+    const keytar = await loadKeytar();
     try {
-      return await keytar.getPassword(service, account);
+      return (await keytar!.getPassword(service, account)) ?? null;
     } catch {
-      // Headless Linux may have keytar installed but no usable D-Bus/keyring.
+      return null;
     }
   }
-
   const file = await readSecretFile();
   return file[encodeKey(service)]?.[encodeKey(account)] ?? null;
 }
@@ -134,41 +197,51 @@ export async function setCredential(
   password: string,
   options: { allowFileFallback?: boolean } = {},
 ): Promise<CredentialBackend> {
-  const keytar = await loadKeytar();
-  if (keytar) {
+  const { backend } = await resolveBackend();
+  if (backend === 'encrypted') {
+    const key = (await resolveMasterKey())!;
+    const file = await readEncFile(key);
+    (file[encodeKey(service)] ??= {})[encodeKey(account)] = password;
+    await writeEncFile(key, file);
+    return 'encrypted';
+  }
+  if (backend === 'keytar') {
+    const keytar = await loadKeytar();
     try {
-      await keytar.setPassword(service, account, password);
+      await keytar!.setPassword(service, account, password);
       return 'keytar';
     } catch (err) {
       if (options.allowFileFallback === false) throw err;
     }
   }
-
-  if (options.allowFileFallback === false) {
+  if (options.allowFileFallback === false && backend !== 'file') {
     throw new Error('OS credential store is unavailable');
   }
-
   const file = await readSecretFile();
-  const serviceKey = encodeKey(service);
-  file[serviceKey] ??= {};
-  file[serviceKey][encodeKey(account)] = password;
+  (file[encodeKey(service)] ??= {})[encodeKey(account)] = password;
   await writeSecretFile(file);
   return 'file';
 }
 
 export async function deleteCredential(service: string, account: string): Promise<void> {
-  const keytar = await loadKeytar();
-  if (keytar) {
+  const { backend } = await resolveBackend();
+  if (backend === 'encrypted') {
+    const key = (await resolveMasterKey())!;
+    const file = await readEncFile(key);
+    delete file[encodeKey(service)]?.[encodeKey(account)];
+    await writeEncFile(key, file);
+    return;
+  }
+  if (backend === 'keytar') {
+    const keytar = await loadKeytar();
     try {
-      await keytar.deletePassword(service, account);
+      await keytar!.deletePassword(service, account);
       return;
     } catch {
-      // Fall through to file cleanup.
+      // fall through to file cleanup
     }
   }
-
   const file = await readSecretFile();
-  const serviceKey = encodeKey(service);
-  delete file[serviceKey]?.[encodeKey(account)];
+  delete file[encodeKey(service)]?.[encodeKey(account)];
   await writeSecretFile(file);
 }
