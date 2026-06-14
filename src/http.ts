@@ -1,12 +1,15 @@
 import { createServer as createNodeServer } from 'node:http';
+import { createReadStream, statSync } from 'node:fs';
 import type { IncomingMessage, Server as NodeHttpServer, ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 
 import { sanitizeDebug } from './errors.js';
+import { getHandoff } from './file-handoff-registry.js';
 
 const MCP_PATH = '/mcp';
+const DOWNLOAD_PREFIX = '/files/';
 
 export type HttpServerOptions = {
   port: number;
@@ -58,6 +61,42 @@ function hasValidRemoteAuth(req: IncomingMessage, expected: string | undefined):
   return timingSafeEqualStr(bearerToken, expected) || timingSafeEqualStr(xAuthToken, expected);
 }
 
+function handleDownload(req: IncomingMessage, res: ServerResponse, token: string): void {
+  const entry = token ? getHandoff(token) : undefined;
+  if (!entry) {
+    res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Not Found or link expired');
+    return;
+  }
+
+  let size = entry.sizeBytes;
+  try {
+    size = statSync(entry.localPath).size;
+  } catch {
+    res.writeHead(410, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('File no longer available');
+    return;
+  }
+
+  // RFC 5987: filename* carries the UTF-8 original name; filename is an ASCII
+  // fallback for older clients.
+  const asciiName = entry.displayName.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  const encodedName = encodeURIComponent(entry.displayName);
+  res.writeHead(200, {
+    'content-type': entry.mimeType,
+    'content-length': String(size),
+    'content-disposition': `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`,
+  });
+
+  const stream = createReadStream(entry.localPath);
+  stream.on('error', () => {
+    if (!res.headersSent) res.writeHead(500);
+    res.end();
+  });
+  req.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
+
 function writeJsonRpcError(res: ServerResponse, status: number, message: string): void {
   res.writeHead(status, { 'content-type': 'application/json' });
   res.end(JSON.stringify({
@@ -75,6 +114,14 @@ export async function startHttpServer(options: HttpServerOptions): Promise<NodeH
     if (req.method === 'GET' && url.pathname === '/') {
       res.writeHead(200, { 'content-type': 'text/plain' });
       res.end('eclass-mcp remote MCP server');
+      return;
+    }
+
+    // File handoff downloads. The opaque token in the path IS the credential
+    // (registered by eclass_file_handoff), so no bearer auth is required —
+    // this lets a browser on the same machine open the link directly.
+    if (req.method === 'GET' && url.pathname.startsWith(DOWNLOAD_PREFIX)) {
+      handleDownload(req, res, decodeURIComponent(url.pathname.slice(DOWNLOAD_PREFIX.length)));
       return;
     }
 

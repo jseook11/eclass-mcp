@@ -91,7 +91,14 @@ npm run chatgptui:stop
 - `tunnel-client health` 또는 `/readyz`가 ready를 반환한다.
 - ChatGPT Settings의 Connectors에서 tunnel을 선택한다.
 
-## 6. 트러블슈팅
+## 6. 파일 다운로드
+
+`eclass_file_handoff`는 HTTP transport에서 base64를 컨텍스트에 싣지 않고 **다운로드 링크**(`http://127.0.0.1:8787/files/<token>`)를 텍스트로 반환한다. 터널과 같은 머신의 브라우저에서 그 링크를 열면 파일이 저장된다(터널은 `/mcp`만 포워딩하므로 링크는 터널을 거치지 않고 localhost로 직접 받는다).
+
+- 터널을 헤드리스/원격 호스트에서 돌려 사용자의 브라우저가 `127.0.0.1`에 도달할 수 없으면 `ECLASS_HANDOFF_BASE_URL`로 도달 가능한 주소를 지정한다.
+- 토큰은 1회 발급되는 불투명 값이며 일정 시간 후 만료된다.
+
+## 7. 트러블슈팅
 
 - `oauth_metadata FAIL`: non-OAuth single-user 모드의 정상 케이스다. `chatgptui`는 이를 허용하고 진행한다.
 - `tunnel-client doctor` 실행 불가: 자동 fallback하지 않고 중단한다. `tunnel-client` 설치와 `PATH`를 확인한다.

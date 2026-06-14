@@ -39,11 +39,12 @@ export interface FileHandoffResult {
     mime_type: string;
     size_bytes: number;
     delivered: true;
+    download_url?: string;
   };
-  content: Array<{
-    type: 'resource';
-    resource: { uri: string; mimeType: string; blob: string };
-  }>;
+  content: Array<
+    | { type: 'resource'; resource: { uri: string; mimeType: string; blob: string } }
+    | { type: 'text'; text: string }
+  >;
 }
 
 export interface HandoffDeps {
@@ -51,6 +52,9 @@ export interface HandoffDeps {
   statSize: (localPath: string) => number | null;
   readFile: (localPath: string) => Buffer;
   maxBytes: number;
+  // URL mode (HTTP transport): when provided, return a download URL as text
+  // instead of an inline base64 blob. Keeps the file out of model context.
+  registerUrl?: (record: DownloadRecord, sizeBytes: number) => string;
 }
 
 export type HandoffError = {
@@ -62,6 +66,30 @@ export type HandoffError = {
 export type HandoffOutcome =
   | { ok: true; result: FileHandoffResult }
   | { ok: false; error: HandoffError };
+
+export function buildFileHandoffUrl(
+  record: DownloadRecord,
+  sizeBytes: number,
+  url: string,
+): FileHandoffResult {
+  const mimeType = inferMimeType(record.display_name);
+  return {
+    structuredContent: {
+      file_id: record.file_id,
+      display_name: record.display_name,
+      mime_type: mimeType,
+      size_bytes: sizeBytes,
+      delivered: true,
+      download_url: url,
+    },
+    content: [
+      {
+        type: 'text',
+        text: `파일 다운로드 링크: ${url}\n파일명: ${record.display_name} (${sizeBytes} bytes)\n브라우저에서 이 URL을 열면 저장됩니다. 링크는 일정 시간 후 만료됩니다.`,
+      },
+    ],
+  };
+}
 
 export function buildFileHandoff(record: DownloadRecord, bytes: Buffer): FileHandoffResult {
   const mimeType = inferMimeType(record.display_name);
@@ -124,6 +152,12 @@ export function handoffFile(fileId: string, deps: HandoffDeps): HandoffOutcome {
         max_bytes: deps.maxBytes,
       },
     };
+  }
+
+  // URL mode: return a link, never load the file into memory or context.
+  if (deps.registerUrl) {
+    const url = deps.registerUrl(record, effectiveSize);
+    return { ok: true, result: buildFileHandoffUrl(record, effectiveSize, url) };
   }
 
   const bytes = deps.readFile(record.local_path);

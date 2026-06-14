@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { startHttpServer } from '../src/http.js';
 import { buildToolList, normalizeToolResult } from '../src/tools/registry.js';
+import { registerHandoff, clearHandoffs } from '../src/file-handoff-registry.js';
 
 function createEmptyServer(): Server {
   return new Server({ name: 'test', version: '0.0.0' }, { capabilities: { tools: {} } });
@@ -127,6 +132,44 @@ test('normalizeToolResult preserves text JSON and adds structuredContent', () =>
   assert.deepEqual(result.structuredContent, {
     result: [{ id: 1, name: '운영체제' }],
   });
+});
+
+test('HTTP /files/<token> streams a registered handoff file without bearer auth', async () => {
+  clearHandoffs();
+  const dir = mkdtempSync(join(tmpdir(), 'handoff-'));
+  const filePath = join(dir, 'data.bin');
+  writeFileSync(filePath, 'hello-world');
+  const token = registerHandoff({
+    localPath: filePath,
+    displayName: '확률통계 3주차.pdf',
+    mimeType: 'application/pdf',
+    sizeBytes: 11,
+  });
+
+  const httpServer = await startHttpServer({
+    port: 0,
+    authToken: 'test-token',
+    createServer: createEmptyServer,
+  });
+  const address = httpServer.address();
+  assert(address && typeof address === 'object');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    // No Authorization header — the opaque token is the credential.
+    const ok = await fetch(`${baseUrl}/files/${token}`);
+    assert.equal(ok.status, 200);
+    assert.equal(ok.headers.get('content-type'), 'application/pdf');
+    assert.match(ok.headers.get('content-disposition') ?? '', /filename\*=UTF-8''/);
+    assert.equal(await ok.text(), 'hello-world');
+
+    const missing = await fetch(`${baseUrl}/files/does-not-exist`);
+    assert.equal(missing.status, 404);
+  } finally {
+    httpServer.close();
+    await once(httpServer, 'close');
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('HTTP /mcp enforces optional bearer auth', async () => {

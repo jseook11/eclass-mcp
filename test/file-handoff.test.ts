@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_HANDOFF_MAX_BYTES,
   buildFileHandoff,
+  buildFileHandoffUrl,
   handoffFile,
   inferMimeType,
   resolveHandoffMaxBytes,
@@ -125,4 +126,35 @@ test('handoffFile returns ok result for an in-limit file', () => {
   const out = handoffFile('f1', depsWith({}));
   assert.equal(out.ok, true);
   assert.equal(out.ok === true && out.result.structuredContent.delivered, true);
+});
+
+test('buildFileHandoffUrl returns a text link, never a base64 blob', () => {
+  const result = buildFileHandoffUrl(baseRecord, 5, 'http://127.0.0.1:8787/files/abc');
+  assert.equal(result.structuredContent.delivered, true);
+  assert.equal(result.structuredContent.download_url, 'http://127.0.0.1:8787/files/abc');
+  assert.equal(result.structuredContent.size_bytes, 5);
+  assert.equal(result.content.length, 1);
+  const [block] = result.content;
+  assert.equal(block.type, 'text');
+  assert.ok(block.type === 'text' && block.text.includes('http://127.0.0.1:8787/files/abc'));
+});
+
+test('handoffFile uses URL mode (no readFile) when registerUrl is provided', () => {
+  let read = false;
+  let registeredSize = 0;
+  const out = handoffFile('f1', depsWith({
+    readFile: () => {
+      read = true;
+      return Buffer.from('x');
+    },
+    registerUrl: (record, sizeBytes) => {
+      registeredSize = sizeBytes;
+      return `http://h/files/tok-${record.file_id}`;
+    },
+  }));
+  assert.equal(out.ok, true);
+  assert.equal(read, false, 'URL mode must not read file bytes');
+  assert.equal(registeredSize, 5);
+  assert.equal(out.ok === true && out.result.structuredContent.download_url, 'http://h/files/tok-f1');
+  assert.equal(out.ok === true && out.result.content[0].type, 'text');
 });
