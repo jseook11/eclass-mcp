@@ -105,6 +105,9 @@ test('buildToolList attaches an object outputSchema to every exposed tool', () =
     assert.ok(props?.result, `${name} outputSchema should wrap an array in 'result'`);
     assert.equal(props?.result.type, 'array', `${name} 'result' should be an array`);
   }
+
+  const handoffProps = byName.get('eclass_file_handoff')?.outputSchema?.properties as Record<string, { type?: string }> | undefined;
+  assert.equal(handoffProps?.download_url?.type, 'string');
 });
 
 test('explicit tool outputSchema is preserved over the registry default', () => {

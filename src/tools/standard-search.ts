@@ -346,7 +346,16 @@ export async function fetchEclassDocument(
       id,
       title: `[다운로드] ${record.display_name}`,
       text: downloadUrl
-        ? `${record.display_name} (${sizeBytes} bytes)\n\n파일 URL: ${downloadUrl}\nChatGPT 브라우징 또는 브라우저에서 이 URL을 열어 파일을 읽거나 다운로드할 수 있습니다. 링크는 일정 시간 후 만료됩니다.`
+        ? [
+            `${record.display_name} (${sizeBytes} bytes)`,
+            '',
+            `파일 URL: ${downloadUrl}`,
+            '중요: 이 fetch 결과에는 파일 본문이나 첨부파일이 없습니다. 위 URL을 직접 열어야 파일을 볼 수 있습니다.',
+            'ChatGPT가 파일을 직접 읽어야 하면, 이 URL이 공개 인터넷에서 접근 가능해야 합니다. localhost/127.0.0.1 URL은 ChatGPT 브라우징에서 열 수 없고 같은 머신의 사용자 브라우저에서만 열 수 있습니다.',
+            '공개 URL이 필요하면 MCP 서버 운영자가 /files/<token> 경로를 공개 HTTPS reverse proxy 또는 터널로 노출하고 ECLASS_HANDOFF_BASE_URL을 그 공개 주소로 설정한 뒤 다시 요청해야 합니다.',
+            '다음 행동: URL이 https://.../files/<token> 같은 공개 주소이면 MCP tool을 더 호출하지 말고 브라우징으로 그 URL을 직접 열어 파일을 읽으세요. localhost/127.0.0.1이면 사용자에게 공개 handoff URL 설정이 필요하다고 안내하세요.',
+            '링크는 일정 시간 후 만료됩니다.',
+          ].join('\n')
         : jsonText({
             file_id: record.file_id,
             display_name: record.display_name,

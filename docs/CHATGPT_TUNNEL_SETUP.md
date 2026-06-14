@@ -93,10 +93,10 @@ npm run chatgptui:stop
 
 ## 6. 파일 핸드오프
 
-`eclass_file_handoff`는 HTTP transport에서 base64를 컨텍스트에 싣지 않고 **파일 URL**(`http://127.0.0.1:8787/files/<token>`)을 텍스트로 반환한다. `/files/<token>` 응답은 `Content-Disposition: inline`으로 스트리밍되므로 PDF처럼 브라우저가 읽을 수 있는 파일은 바로 열 수 있고, 그 외 파일은 브라우저 정책에 따라 다운로드된다.
+`eclass_file_handoff`는 HTTP transport에서 base64를 컨텍스트에 싣지 않고 **파일 URL**(`http://127.0.0.1:8787/files/<token>`)만 텍스트로 반환한다. 이 응답은 파일 첨부가 아니므로 ChatGPT가 파일을 가진 것이 아니다. 파일을 보려면 반환된 URL을 브라우징 또는 브라우저에서 직접 열어야 한다. `/files/<token>` 응답은 `Content-Disposition: inline`으로 스트리밍되므로 PDF처럼 브라우저가 읽을 수 있는 파일은 바로 열 수 있고, 그 외 파일은 브라우저 정책에 따라 다운로드된다.
 
 - 로컬 브라우저 다운로드만 필요하면 터널과 같은 머신에서 `127.0.0.1` 링크를 열면 된다(터널은 `/mcp`만 포워딩하므로 링크는 터널을 거치지 않고 localhost로 직접 받는다).
-- ChatGPT 브라우징이 URL을 직접 열어 읽게 하려면 `/files/<token>`도 공개 도달 가능해야 하며, `ECLASS_HANDOFF_BASE_URL`을 그 공개 주소로 지정한다.
+- ChatGPT 브라우징이 URL을 직접 열어 읽게 하려면 `/files/<token>`도 공개 인터넷에서 도달 가능해야 한다. 공개 HTTPS reverse proxy 또는 터널을 준비하고, `ECLASS_HANDOFF_BASE_URL`을 그 공개 주소로 지정한 뒤 `eclass_file_handoff`를 다시 호출해 공개 URL을 새로 발급한다.
 - 토큰은 1회 발급되는 불투명 값이며 일정 시간 후 만료된다.
 
 ## 7. 트러블슈팅

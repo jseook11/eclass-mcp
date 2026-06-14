@@ -36,6 +36,9 @@ import { sanitizeDebug } from './errors.js';
 import { buildToolList, normalizeToolResult } from './tools/registry.js';
 import { fetchEclassDocument, searchEclassDocuments } from './tools/standard-search.js';
 
+const LOCAL_FILE_HANDOFF_NOTE =
+  '다운로드/조회 결과의 파일은 MCP 서버 로컬 캐시에만 있습니다. ChatGPT가 파일 내용을 보려면 file_id로 eclass_file_handoff를 호출해 공개 /files/<token> URL을 별도 발급하고, 그 URL을 브라우징으로 직접 열어야 합니다.';
+
 // --- Server factory ---
 export type EclassServerContext = {
   username: string;
@@ -368,7 +371,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'eclass_search_downloads',
-        description: '[로컬] 다운로드된 파일을 필터 검색합니다 (파일명/강의명/확장자/source/다운로드 날짜 범위). 전체 나열은 eclass_list_downloads, 강의별 요약은 eclass_get_download_status를 사용하세요.',
+        description: '[로컬] MCP 서버 로컬 캐시에 다운로드된 파일 기록만 필터 검색합니다 (파일명/강의명/확장자/source/다운로드 날짜 범위). 이 도구는 파일 본문을 반환하지 않습니다. ChatGPT가 파일을 보려면 검색된 file_id로 eclass_file_handoff를 호출해 공개 /files/<token> URL을 발급하고, 그 URL을 브라우징으로 직접 열어야 합니다. 전체 나열은 eclass_list_downloads, 강의별 요약은 eclass_get_download_status를 사용하세요.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -411,7 +414,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'eclass_get_materials',
-        description: '[네트워크] 강의 자료를 가져옵니다 (모듈, 파일함, 강의자료실, 외부도구). 반환값은 { ok, course_id, sources, materials, errors, warnings } JSON 객체이며, 일부 source 실패 시 성공한 자료와 실패 정보를 함께 반환합니다. materials 항목은 eclass_download_file/eclass_download_materials_batch에 그대로 전달할 수 있습니다.',
+        description: '[네트워크] 강의 자료 목록/메타데이터를 가져옵니다 (모듈, 파일함, 강의자료실, 외부도구). 이 도구는 파일 본문을 다운로드하거나 ChatGPT에 첨부하지 않습니다. 파일은 eclass_download_file/eclass_download_materials_batch로 MCP 서버 로컬 캐시에 받은 뒤, ChatGPT가 읽어야 하면 eclass_file_handoff로 공개 /files/<token> URL을 별도 발급해야 합니다. 반환값은 { ok, course_id, sources, materials, errors, warnings } JSON 객체이며, 일부 source 실패 시 성공한 자료와 실패 정보를 함께 반환합니다.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -428,7 +431,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'eclass_download_file',
-        description: '[네트워크] 강의 파일을 로컬에 다운로드합니다. 이미 다운로드된 파일은 건너뜁니다. 동영상은 eclass_download_video를 사용하세요.',
+        description: '[네트워크] 강의 파일을 MCP 서버 로컬 디스크/캐시에 다운로드합니다. 이 도구는 ChatGPT에 파일 본문을 전달하지 않고 local_path/file_id 같은 서버 측 기록만 반환합니다. ChatGPT가 파일을 읽어야 하면 반환된 file_id로 eclass_file_handoff를 호출해 공개 /files/<token> URL을 발급하고, 그 URL을 브라우징으로 직접 열어야 합니다. 이미 다운로드된 파일은 건너뜁니다. 동영상은 eclass_download_video를 사용하세요.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -443,7 +446,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'eclass_download_materials_batch',
-        description: '[네트워크] 여러 파일 자료를 한 번에 다운로드합니다 (부분 성공 지원). eclass_get_materials가 반환한 materials 항목을 그대로 전달하면 됩니다. 동영상 자료는 eclass_download_video로 별도 처리합니다.',
+        description: '[네트워크] 여러 파일 자료를 MCP 서버 로컬 디스크/캐시에 한 번에 다운로드합니다 (부분 성공 지원). 이 도구는 ChatGPT에 파일 본문을 전달하지 않고 file_id/local_path 같은 서버 측 기록만 반환합니다. ChatGPT가 파일을 읽어야 하면 각 file_id로 eclass_file_handoff를 호출해 공개 /files/<token> URL을 발급하고, 그 URL을 브라우징으로 직접 열어야 합니다. eclass_get_materials가 반환한 materials 항목을 그대로 전달하면 됩니다. 동영상 자료는 eclass_download_video로 별도 처리합니다.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -471,7 +474,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'eclass_download_video',
-        description: '[네트워크] OCS UniPlayer MP4 동영상을 검증 후 로컬에 다운로드합니다 (제한시간 30분). HLS/m3u8/DRM/진도 추적형 영상은 지원하지 않습니다. 캐시에는 file_id="video:<video_id>"로 기록되므로 재다운로드 시 eclass_remove_download에 이 형식을 사용하세요.',
+        description: '[네트워크] OCS UniPlayer MP4 동영상을 검증 후 MCP 서버 로컬 디스크/캐시에 다운로드합니다 (제한시간 30분). 이 도구는 ChatGPT에 동영상 바이트를 전달하지 않습니다. 외부에서 받아야 하면 file_id="video:<video_id>"로 eclass_file_handoff를 호출해 공개 /files/<token> URL을 별도 발급해야 합니다. HLS/m3u8/DRM/진도 추적형 영상은 지원하지 않습니다. 캐시에는 file_id="video:<video_id>"로 기록되므로 재다운로드 시 eclass_remove_download에 이 형식을 사용하세요.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -487,7 +490,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'eclass_list_downloads',
-        description: '[로컬] 다운로드 기록 전체를 나열합니다. 조건 검색은 eclass_search_downloads, 강의별 요약은 eclass_get_download_status를 사용하세요.',
+        description: '[로컬] MCP 서버 로컬 캐시에 저장된 다운로드 기록 전체를 나열합니다. 이 도구는 파일 본문을 반환하지 않습니다. ChatGPT가 파일을 읽어야 하면 file_id로 eclass_file_handoff를 호출해 공개 /files/<token> URL을 별도 발급해야 합니다. 조건 검색은 eclass_search_downloads, 강의별 요약은 eclass_get_download_status를 사용하세요.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -497,7 +500,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'eclass_get_download_status',
-        description: '[로컬] 다운로드 현황을 강의별로 요약 조회합니다. 강의명은 로컬 course cache를 사용합니다.',
+        description: '[로컬] MCP 서버 로컬 캐시의 다운로드 현황을 강의별로 요약 조회합니다. 이 도구는 파일 본문을 반환하지 않습니다. 파일 내용을 보려면 eclass_search_downloads/eclass_list_downloads로 file_id를 찾고 eclass_file_handoff로 공개 URL을 별도 발급해야 합니다. 강의명은 로컬 course cache를 사용합니다.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -518,11 +521,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'eclass_file_handoff',
-        description: '[로컬] 다운로드된 파일의 바이트를 ChatGPT로 전달합니다(원격 transport 전용 용도). file_id는 eclass_search_downloads/eclass_list_downloads에서 얻습니다. 25MB 초과 파일은 거절됩니다(ECLASS_HANDOFF_MAX_BYTES로 조정).',
+        description: '[로컬/URL] 다운로드된 파일 본문을 tool 응답에 첨부하지 않고 /files/<token> URL만 발급합니다. ChatGPT가 직접 파일을 읽으려면 반환 URL이 공개 인터넷에서 접근 가능해야 하며, localhost/127.0.0.1 URL은 같은 머신의 사용자 브라우저 전용입니다. 공개 handoff가 필요하면 ECLASS_HANDOFF_BASE_URL을 공개 HTTPS reverse proxy/터널 주소로 설정한 뒤 다시 호출하세요. file_id는 eclass_search_downloads/eclass_list_downloads에서 얻습니다. 25MB 초과 파일은 거절됩니다(ECLASS_HANDOFF_MAX_BYTES로 조정).',
         inputSchema: {
           type: 'object',
           properties: {
-            file_id: { type: 'string', description: '전달할 파일의 file_id (eclass_search_downloads 결과). 영상은 "video:<id>" 형식.' },
+            file_id: { type: 'string', description: 'URL을 발급할 로컬 다운로드 파일의 file_id (eclass_search_downloads 결과). 영상은 "video:<id>" 형식.' },
           },
           required: ['file_id'],
         },
@@ -694,7 +697,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const records = fileCache.list(parsed.course_id);
         const cachedCourses = fileCache.listCachedCourses();
         const result = searchDownloads(records, cachedCourses, parsed);
-        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ ...result, handoff_note: LOCAL_FILE_HANDOFF_NOTE }) }] };
       }
 
       case 'eclass_export_course_snapshot': {
@@ -773,6 +776,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               local_path: outcome.local_path,
               size_bytes: outcome.size_bytes,
               skipped: outcome.status === 'skipped',
+              handoff_note: LOCAL_FILE_HANDOFF_NOTE,
             }),
           }],
         };
@@ -796,7 +800,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
         return {
           isError: !result.ok,
-          content: [{ type: 'text', text: JSON.stringify(result) }],
+          content: [{ type: 'text', text: JSON.stringify({ ...result, handoff_note: LOCAL_FILE_HANDOFF_NOTE }) }],
         };
       }
 
@@ -805,7 +809,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const result = await downloadVideo(parsed, fileCache);
         return {
           isError: !result.ok,
-          content: [{ type: 'text', text: JSON.stringify(result) }],
+          content: [{ type: 'text', text: JSON.stringify({ ...result, handoff_note: LOCAL_FILE_HANDOFF_NOTE }) }],
         };
       }
 
@@ -822,7 +826,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? (fileCache.getCachedCourse(parsed.course_id) ? [fileCache.getCachedCourse(parsed.course_id)!] : [])
           : fileCache.listCachedCourses();
         const status = getDownloadStatus(records, cachedCourses, parsed.course_id);
-        return { content: [{ type: 'text', text: JSON.stringify(status) }] };
+        return { content: [{ type: 'text', text: JSON.stringify({ ...status, handoff_note: LOCAL_FILE_HANDOFF_NOTE }) }] };
       }
 
       case 'eclass_remove_download': {
