@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -6,6 +7,10 @@ import { expandTilde } from './utils.js';
 
 export const DEFAULT_SECRET_STORE_PATH = '~/.eclass-mcp/secrets.json';
 export const CREDENTIAL_BACKEND_ENV = 'ECLASS_CREDENTIAL_BACKEND';
+export const DEFAULT_ENC_STORE_PATH = '~/.eclass-mcp/secrets.enc';
+export const ENC_STORE_PATH_ENV = 'ECLASS_ENC_STORE_PATH';
+export const SECRET_KEY_ENV = 'ECLASS_SECRET_KEY';
+export const SECRET_KEY_FILE_ENV = 'ECLASS_SECRET_KEY_FILE';
 
 export type CredentialBackend = 'keytar' | 'file';
 
@@ -16,6 +21,28 @@ type KeytarModule = {
 };
 
 type SecretFile = Record<string, Record<string, string>>;
+
+export type EncFile = { v: 1; iv: string; tag: string; ct: string };
+
+export function encryptSecretFile(key: Buffer, data: SecretFile): EncFile {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const pt = Buffer.from(JSON.stringify(data), 'utf8');
+  const ct = Buffer.concat([cipher.update(pt), cipher.final()]);
+  return {
+    v: 1,
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    ct: ct.toString('base64'),
+  };
+}
+
+export function decryptSecretFile(key: Buffer, enc: EncFile): SecretFile {
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(enc.iv, 'base64'));
+  decipher.setAuthTag(Buffer.from(enc.tag, 'base64'));
+  const pt = Buffer.concat([decipher.update(Buffer.from(enc.ct, 'base64')), decipher.final()]);
+  return JSON.parse(pt.toString('utf8')) as SecretFile;
+}
 
 let keytarLoad: Promise<KeytarModule | null> | null = null;
 
