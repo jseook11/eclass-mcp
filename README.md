@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-24.x-339933?logo=node.js&logoColor=white)](.nvmrc)
 [![MCP](https://img.shields.io/badge/MCP-server-6E40C9)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-130%20passing-brightgreen.svg)](#개발)
+[![Tests](https://img.shields.io/badge/tests-133%20passing-brightgreen.svg)](#개발)
 
 > **중앙대학교 eclass를 자연어로.** 시험 일정부터 과제 제출까지, LMS 작업을 Claude·Codex 같은 MCP 클라이언트의 도구로 노출하는 서버입니다.
 
@@ -24,6 +24,7 @@
 - [동작 원리](#동작-원리)
 - [요구 사항](#요구-사항)
 - [빠른 시작](#빠른-시작)
+- [ChatGPT 연결](#chatgpt-연결)
 - [사용 예시](#사용-예시)
 - [보안](#보안)
 - [환경 변수](#환경-변수)
@@ -155,6 +156,50 @@ pnpm run setup
 
 설정 후 MCP 클라이언트를 재시작(또는 재연결)하면 도구가 노출됩니다.
 
+## ChatGPT 연결
+
+ChatGPT UI나 Responses API의 remote MCP 서버로 붙일 때는 HTTP transport를 사용합니다.
+v1은 **개인용 단일 사용자 서버**입니다. 서버가 실행되는 머신의 `ECLASS_USERNAME`과
+OS 자격증명 저장소(Keychain/libsecret)에 저장된 LMS 비밀번호를 사용하며, ChatGPT
+사용자별 OAuth linking은 아직 지원하지 않습니다.
+
+```bash
+# 1) stdio 설정과 동일하게 credential store를 먼저 준비
+pnpm run setup
+
+# 2) 빌드
+pnpm run build
+
+# 3) 로컬 remote MCP 서버 실행
+ECLASS_USERNAME=<your-id> \
+ECLASS_REMOTE_AUTH_TOKEN=<long-random-token> \
+node dist/index.js --http --port 8787
+
+# 개발 중 ChatGPT에서 접근할 HTTPS URL 노출
+ngrok http 8787
+```
+
+ChatGPT에서는 **Settings → Apps & Connectors → Advanced settings**에서 Developer Mode를
+켠 뒤, connector/app 생성 화면에 tunnel URL의 `/mcp` 경로를 넣습니다.
+
+```text
+https://<subdomain>.ngrok.app/mcp
+```
+
+HTTP 서버는 다음을 지원합니다.
+
+- `GET /` — health check
+- `POST/GET/DELETE /mcp` — MCP Streamable HTTP transport
+- `ECLASS_REMOTE_AUTH_TOKEN` — 설정 시 `Authorization: Bearer <token>`이 없는 `/mcp`
+  요청을 거부
+- `ECLASS_HTTP_ALLOWED_ORIGINS` — 콤마로 구분한 CORS origin allowlist. 미설정 시 개발
+  편의를 위해 `*`
+
+로컬에서만 시험할 때는 `pnpm run dev:http`를 사용할 수 있고, 빌드 후에는
+`pnpm run start:http`가 `node dist/index.js --http --port 8787`을 실행합니다.
+공개 URL로 노출할 때는 반드시 `ECLASS_REMOTE_AUTH_TOKEN`이나 tunnel 접근 제어를 두세요.
+도구/metadata 변경 후에는 ChatGPT connector 설정에서 refresh해야 새 descriptor가 반영됩니다.
+
 ## 사용 예시
 
 | 자연어 요청 | 서버가 하는 일 |
@@ -188,6 +233,10 @@ pnpm run setup
 | `ECLASS_EXAM_DB_PATH` | `~/.eclass-mcp/exams.db` | 시험 시간표 전용 DB |
 | `ECLASS_CREDENTIAL_BACKEND` | keytar (가능 시) | `file` 지정 시 파일 저장소 강제 |
 | `ALLOW_PLAINTEXT_ENV_SECRETS` | 꺼짐 | `1`일 때만 `ECLASS_PASSWORD` env 허용 |
+| `ECLASS_TRANSPORT` | `stdio` | `http`로 지정하면 remote MCP HTTP 서버 실행 |
+| `ECLASS_HTTP_PORT` / `PORT` | `8787` | HTTP transport 포트 |
+| `ECLASS_REMOTE_AUTH_TOKEN` | (없음) | 설정 시 `/mcp` Bearer token 인증 강제 |
+| `ECLASS_HTTP_ALLOWED_ORIGINS` | `*` | HTTP CORS origin allowlist (콤마 구분) |
 | `DEBUG` | 꺼짐 | `1`이면 stderr 디버그 로그 |
 
 ## 트러블슈팅
@@ -204,8 +253,10 @@ pnpm run setup
 
 ```bash
 pnpm run dev      # tsx로 소스 직접 실행
-pnpm test         # node --test 기반 테스트 (130개)
+pnpm run dev:http # tsx로 HTTP /mcp 개발 서버 실행 (:8787)
+pnpm test         # node --test 기반 테스트 (133개)
 pnpm run build    # 타입체크 겸 빌드
+pnpm run start:http # 빌드된 HTTP /mcp 서버 실행 (:8787)
 pnpm run doctor   # 인증/브라우저/API 사전 점검
 pnpm run discover # 엔드포인트 디스커버리 (docs/DISCOVERY.md)
 ```
