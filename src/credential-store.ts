@@ -168,6 +168,43 @@ export async function resolveBackend(): Promise<{ backend: CredentialBackend; re
   return { backend: 'file', reason: 'auto: no key and keytar unavailable' };
 }
 
+export type CredentialDiagnostics = {
+  backend: CredentialBackend;
+  reason: string;
+  keytarLoaded: boolean;
+  keytarError: string | null;
+  masterKeyPresent: boolean;
+  dbusSession: boolean;
+  platform: NodeJS.Platform;
+};
+
+export async function describeCredentialEnvironment(): Promise<CredentialDiagnostics> {
+  let backend: CredentialBackend;
+  let reason: string;
+  try {
+    ({ backend, reason } = await resolveBackend());
+  } catch (err) {
+    backend = 'file';
+    reason = err instanceof Error ? `unresolved: ${err.message}` : 'unresolved';
+  }
+  const keytar = await loadKeytar();
+  let masterKeyPresent = false;
+  try {
+    masterKeyPresent = (await resolveMasterKey()) !== null;
+  } catch {
+    masterKeyPresent = false; // malformed key
+  }
+  return {
+    backend,
+    reason,
+    keytarLoaded: keytar !== null,
+    keytarError: keytarLoadError,
+    masterKeyPresent,
+    dbusSession: Boolean(process.env.DBUS_SESSION_BUS_ADDRESS),
+    platform: os.platform(),
+  };
+}
+
 export async function getCredentialBackend(): Promise<CredentialBackend> {
   return (await resolveBackend()).backend;
 }

@@ -16,6 +16,7 @@ import {
   decryptSecretFile,
   resolveMasterKey,
   resolveBackend,
+  describeCredentialEnvironment,
 } from '../src/credential-store.js';
 
 test('credential store falls back to a 0600 file store', async () => {
@@ -129,6 +130,19 @@ test('explicit encrypted backend without a key throws (no silent fallback)', asy
     await assert.rejects(() => resolveBackend(), /master key/);
   } finally {
     delete process.env[CREDENTIAL_BACKEND_ENV];
+  }
+});
+
+test('describeCredentialEnvironment reports encrypted backend and key presence', async () => {
+  process.env[SECRET_KEY_ENV] = crypto.randomBytes(32).toString('base64');
+  try {
+    const d = await describeCredentialEnvironment();
+    assert.equal(d.backend, 'encrypted');
+    assert.equal(d.masterKeyPresent, true);
+    assert.equal(typeof d.dbusSession, 'boolean');
+    assert.equal(typeof d.keytarLoaded, 'boolean');
+  } finally {
+    delete process.env[SECRET_KEY_ENV];
   }
 });
 
