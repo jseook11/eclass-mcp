@@ -59,6 +59,7 @@ ChatGPT Company Knowledge / connector-like 호환용 표준 검색 도구. eclas
 - 입력: `{ id: string }`
 - 출력: `{ id, title, text, url, metadata? }`
 - `text`는 해당 항목의 구조화 JSON을 사람이 읽을 수 있게 pretty-print한 문자열이다.
+- **`eclass://download/<file_id>`** 항목은 특별 취급한다. HTTP transport에서는 `text`/`url`/`metadata.download_url`에 **다운로드 링크**(`/files/<token>`)를 담아 반환한다. ChatGPT가 이 링크를 사용자에게 노출하면 같은 머신 브라우저에서 받을 수 있다(서버는 MCP `resources` 기능을 노출하지 않으므로 ChatGPT가 `read_resource`로 파일을 읽으려 하면 실패한다 — 링크 경로가 정상 경로다). stdio에서는 메타데이터 JSON(`local_path` 포함)을 반환한다.
 
 ### eclass_get_courses
 
