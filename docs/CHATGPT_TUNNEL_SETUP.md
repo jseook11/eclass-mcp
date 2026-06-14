@@ -18,6 +18,21 @@ eclass-mcp를 OpenAI Secure MCP Tunnel로 ChatGPT connector에 연결한다.
 
 ## 2. 런타임 환경변수
 
+권장: env 파일을 한 번 작성해두고 매번 `npm run chatgptui`만 실행한다.
+`scripts/chatgptui.ts`가 시작 시 프로젝트 루트의 `.env.chatgptui`를 자동 로드한다.
+
+```bash
+cp .env.chatgptui.example .env.chatgptui
+# .env.chatgptui 편집 후
+npm run chatgptui
+```
+
+`.env.chatgptui`는 gitignore된다. 다른 경로를 쓰려면
+`ECLASS_CHATGPTUI_ENV_FILE=/path/to.env npm run chatgptui`.
+이미 셸에 `export`된 변수가 있으면 그 값이 파일보다 우선한다.
+
+수동 export도 동일하게 동작한다:
+
 ```bash
 export CONTROL_PLANE_API_KEY="sk-..."
 export CONTROL_PLANE_TUNNEL_ID="tunnel_0123..."
