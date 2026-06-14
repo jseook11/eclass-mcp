@@ -116,11 +116,294 @@ export const standardFetchTool: Tool = {
   },
 };
 
+type JsonSchema = Record<string, unknown>;
+
+const obj = (properties: Record<string, JsonSchema>, required?: string[]): JsonSchema => ({
+  type: 'object',
+  properties,
+  ...(required && required.length > 0 ? { required } : {}),
+});
+
+const arr = (items: JsonSchema): JsonSchema => ({ type: 'array', items });
+
+const str: JsonSchema = { type: 'string' };
+const num: JsonSchema = { type: 'number' };
+const bool: JsonSchema = { type: 'boolean' };
+
+// 배열을 반환하는 도구는 normalizeToolResult가 structuredContent.result로 감싼다(TOOLS.md 공통사항).
+// 따라서 outputSchema도 { result: [...] } 형태로 기술한다.
+const arrayResult = (items: JsonSchema): JsonSchema => obj({ result: arr(items) }, ['result']);
+
+// 실패 시 공통으로 실릴 수 있는 필드. additionalProperties를 막지 않으므로(기본 허용)
+// optional/partial 필드와 미래 확장이 자연스럽게 호환된다.
+const errorEnvelope: Record<string, JsonSchema> = {
+  ok: bool,
+  error_code: str,
+  message: str,
+  retryable: bool,
+};
+
+// 각 도구의 출력 스키마. 근거는 docs/TOOLS.md의 "출력" 명세.
+// required는 성공/실패와 무관하게 항상 존재하는 최소 필드만 지정한다.
+const ECLASS_OUTPUT_SCHEMAS: Record<string, JsonSchema> = {
+  eclass_get_courses: arrayResult(obj({ id: num, name: str }, ['id', 'name'])),
+  eclass_get_courses_cached: arrayResult(obj({ id: num, name: str, fetched_at: str })),
+  eclass_doctor: obj(
+    {
+      checked_at: str,
+      checks: arr(obj({ name: str, ok: bool, detail: str })),
+    },
+    ['checks'],
+  ),
+  eclass_get_assignments: arrayResult(
+    obj({
+      assignment_id: num,
+      title: str,
+      course_name: str,
+      due_at: { type: ['string', 'null'] },
+      is_submitted: bool,
+      is_missing: bool,
+      url: str,
+      submission_types: arr(str),
+      allowed_extensions: arr(str),
+      allowed_attempts: num,
+    }),
+  ),
+  eclass_get_assignment_detail: obj(
+    {
+      ...errorEnvelope,
+      assignment: obj({
+        id: num,
+        course_id: num,
+        name: str,
+        due_at: { type: ['string', 'null'] },
+        unlock_at: { type: ['string', 'null'] },
+        lock_at: { type: ['string', 'null'] },
+        points_possible: num,
+        grading_type: str,
+        submission_types: arr(str),
+        allowed_extensions: arr(str),
+        allowed_attempts: num,
+        has_submitted: bool,
+        submitted_at: { type: ['string', 'null'] },
+        attempt: { type: ['number', 'null'] },
+        workflow_state: str,
+        score: { type: ['number', 'null'] },
+        grade: { type: ['string', 'null'] },
+        graded_at: { type: ['string', 'null'] },
+        html_url: str,
+      }),
+    },
+    ['ok'],
+  ),
+  eclass_submit_assignment: obj(
+    {
+      ...errorEnvelope,
+      mode: str,
+      already_submitted: bool,
+      is_resubmission: bool,
+      validation: { type: 'object' },
+      strategy: str,
+      submitted_at: { type: ['string', 'null'] },
+      attempt: { type: ['number', 'null'] },
+      verification: { type: 'object' },
+    },
+    ['ok'],
+  ),
+  eclass_get_grades: obj(
+    {
+      ok: bool,
+      courses: arr(
+        obj({
+          course_id: num,
+          course_name: str,
+          current_score: { type: ['number', 'null'] },
+          current_grade: { type: ['string', 'null'] },
+          final_score: { type: ['number', 'null'] },
+          final_grade: { type: ['string', 'null'] },
+          assignments: arr(obj({ assignment_id: num, name: str })),
+        }),
+      ),
+      errors: arr(obj({ scope: str, reason: str, retryable: bool })),
+    },
+    ['ok'],
+  ),
+  eclass_sync_course_metadata: obj(
+    {
+      ok: bool,
+      synced: arr({ type: 'object' }),
+      errors: arr({ type: 'object' }),
+    },
+    ['ok'],
+  ),
+  eclass_sync_exam_schedules: obj(
+    {
+      ok: bool,
+      term: str,
+      exam_type: str,
+      sources_checked: num,
+      documents: arr({ type: 'object' }),
+      partial_failures: arr({ type: 'object' }),
+    },
+    ['ok'],
+  ),
+  eclass_get_exam_schedule: obj(
+    {
+      ok: bool,
+      mode: str,
+      matches: arr({ type: 'object' }),
+      matched_by: str,
+      reason: str,
+      course_metadata: { type: 'object' },
+      candidates: arr({ type: 'object' }),
+      refresh_result: { type: 'object' },
+    },
+    ['ok'],
+  ),
+  eclass_list_exam_sources: obj(
+    {
+      ok: bool,
+      sources: arr({ type: 'object' }),
+      partial_failures: arr({ type: 'object' }),
+    },
+    ['ok'],
+  ),
+  eclass_search_syllabus: obj(
+    {
+      ...errorEnvelope,
+      items: arr({ type: 'object' }),
+    },
+    ['ok'],
+  ),
+  eclass_get_syllabus: obj(
+    {
+      ...errorEnvelope,
+      document: { type: 'object' },
+    },
+    ['ok'],
+  ),
+  eclass_search_downloads: obj(
+    {
+      matches: arr({ type: 'object' }),
+      total_matched: num,
+      limit: num,
+    },
+    ['matches'],
+  ),
+  eclass_export_course_snapshot: obj(
+    {
+      ok: bool,
+      course_id: num,
+      format: str,
+      local_path: str,
+      snapshot: { type: 'object' },
+      content: str,
+      partial_failures: arr(obj({ section: str, reason: str })),
+    },
+    ['ok'],
+  ),
+  eclass_get_announcements: arrayResult(
+    obj({
+      id: { type: ['string', 'number'] },
+      title: str,
+      author: str,
+      posted_at: { type: ['string', 'null'] },
+      message: str,
+      has_attachment: bool,
+    }),
+  ),
+  eclass_get_materials: obj(
+    {
+      ok: bool,
+      course_id: num,
+      sources: obj({ requested: arr(str), succeeded: arr(str), failed: arr(str) }),
+      materials: arr({ type: 'object' }),
+      errors: arr({ type: 'object' }),
+      warnings: arr({ type: 'object' }),
+    },
+    ['ok'],
+  ),
+  eclass_download_file: obj(
+    {
+      file_id: str,
+      display_name: str,
+      local_path: str,
+      size_bytes: num,
+      skipped: bool,
+    },
+    ['file_id', 'display_name'],
+  ),
+  eclass_download_materials_batch: obj(
+    {
+      ok: bool,
+      course_id: num,
+      summary: obj({ total: num, downloaded: num, skipped: num, failed: num }),
+      results: arr({ type: 'object' }),
+    },
+    ['ok'],
+  ),
+  eclass_download_video: obj(
+    {
+      ...errorEnvelope,
+      video_id: str,
+      display_name: str,
+      local_path: str,
+      size_bytes: num,
+      skipped: bool,
+      strategy: str,
+    },
+    ['ok'],
+  ),
+  eclass_list_downloads: arrayResult(
+    obj({
+      file_id: str,
+      course_id: num,
+      display_name: str,
+      local_path: str,
+      downloaded_at: str,
+      size_bytes: num,
+    }),
+  ),
+  eclass_get_download_status: obj(
+    {
+      mode: str,
+      courses: arr({ type: 'object' }),
+      total_file_count: num,
+      total_size_bytes: num,
+      downloads: arr({ type: 'object' }),
+    },
+    ['mode'],
+  ),
+  eclass_remove_download: obj(
+    {
+      removed: { type: ['number', 'boolean'] },
+      file_id: str,
+      course_id: num,
+    },
+    ['removed'],
+  ),
+  eclass_file_handoff: obj(
+    {
+      file_id: str,
+      display_name: str,
+      mime_type: str,
+      size_bytes: num,
+      delivered: bool,
+    },
+    ['file_id', 'delivered'],
+  ),
+};
+
+export function outputSchemaFor(name: string): Tool['outputSchema'] | undefined {
+  return ECLASS_OUTPUT_SCHEMAS[name] as Tool['outputSchema'] | undefined;
+}
+
 export function buildToolList(tools: Tool[]): Tool[] {
   return [...tools, standardSearchTool, standardFetchTool].map((tool) => ({
     ...tool,
     title: tool.title ?? titleFromName(tool.name),
     annotations: tool.annotations ?? annotationsFor(tool.name),
+    outputSchema: tool.outputSchema ?? outputSchemaFor(tool.name),
   }));
 }
 
