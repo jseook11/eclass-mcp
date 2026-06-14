@@ -4,11 +4,16 @@
 [flows.md](flows.md)의 각 단계가 `(C1)`처럼 ID로 이 규약을 가리킨다. 출력 필드의
 전체 의미·옵션 입력은 [TOOLS.md](TOOLS.md) 참조. (필수 = ●)
 
+출처(provenance) 규약은 "값을 확보한 상태"를 요구할 뿐, 매번 재호출을 요구하지 않는다.
+이번 세션에서 이미 신뢰할 값을 얻었으면 재사용한다. **단 안전 규약(C6)은 컨텍스트와
+무관하게 항상 수행한다.**
+
 ## C1 — course_id의 출처
 
 `course_id`는 `eclass_get_courses_cached`(우선) 또는 `eclass_get_courses` 출력의
 `id`에서만 가져온다. 강의명만 알 때 지어내지 않는다. 목록 `name`을 사용자가 말한
-강의와 매치해 그 행의 `id`를 쓰고, 모호하면 후보를 제시해 고르게 한다.
+강의와 매치해 그 행의 `id`를 쓰고, 모호하면 후보를 제시해 고르게 한다. 이번 세션에서
+이미 매치해 둔 `course_id`는 다시 조회하지 않고 재사용한다(학기가 바뀌었을 만하면 갱신).
 
 ## C2 — 자료 → 다운로드 필드명 변환
 
@@ -41,7 +46,7 @@
 `assignment_id` ●. `assignment_id`는 `eclass_get_assignments`(`course_id` 지정 호출)
 출력의 `assignment_id`에서 얻는다. 없으면 항목 `url` 끝의 숫자에서 얻는다.
 
-## C6 — 과제 제출 안전 조건
+## C6 — 과제 제출 안전 조건 (컨텍스트와 무관하게 항상)
 
 - `file_paths`(online_upload)와 `body`(online_text_entry)는 **동시 지정 불가**(택1).
 - `dry_run` 기본 `true`. 실제 제출은 `dry_run: false`를 명시할 때만.
