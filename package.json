@@ -35,6 +35,8 @@
     "dev:http": "tsx src/index.ts --http --port 8787",
     "start": "node dist/index.js",
     "start:http": "node dist/index.js --http --port 8787",
+    "chatgptui": "tsx scripts/chatgptui.ts",
+    "chatgptui:stop": "tsx scripts/chatgptui.ts stop",
     "setup": "tsx scripts/setup.ts",
     "doctor": "tsx scripts/doctor.ts",
     "install:skill": "node scripts/install-skill.mjs",

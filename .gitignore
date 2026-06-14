@@ -17,6 +17,8 @@ pnpm-lock.yaml
 files/
 
 # Local agent/workspace state
+# ChatGPT tunnel orchestrator runtime pid
+.chatgptui.pid
 CLAUDE.md
 Agents.md
 .claude/

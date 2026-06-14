@@ -37,18 +37,25 @@ function writeCorsHeaders(
   if (origin) res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, mcp-session-id');
+  res.setHeader('Access-Control-Allow-Headers', 'authorization, x-eclass-auth, content-type, mcp-session-id');
   res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
   return true;
 }
 
-function hasValidBearer(req: IncomingMessage, expected: string | undefined): boolean {
-  if (!expected) return true;
-  const auth = req.headers.authorization;
-  if (!auth?.startsWith('Bearer ')) return false;
-  const actualBuffer = Buffer.from(auth.slice('Bearer '.length), 'utf8');
+function timingSafeEqualStr(actual: string | undefined, expected: string): boolean {
+  if (actual === undefined) return false;
+  const actualBuffer = Buffer.from(actual, 'utf8');
   const expectedBuffer = Buffer.from(expected, 'utf8');
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
+}
+
+function hasValidRemoteAuth(req: IncomingMessage, expected: string | undefined): boolean {
+  if (!expected) return true;
+  const auth = req.headers.authorization;
+  const bearerToken = auth?.startsWith('Bearer ') ? auth.slice('Bearer '.length) : undefined;
+  const rawXAuth = req.headers['x-eclass-auth'];
+  const xAuthToken = Array.isArray(rawXAuth) ? rawXAuth[0] : rawXAuth;
+  return timingSafeEqualStr(bearerToken, expected) || timingSafeEqualStr(xAuthToken, expected);
 }
 
 function writeJsonRpcError(res: ServerResponse, status: number, message: string): void {
@@ -88,7 +95,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<NodeH
       return;
     }
 
-    if (!hasValidBearer(req, options.authToken)) {
+    if (!hasValidRemoteAuth(req, options.authToken)) {
       res.setHeader('WWW-Authenticate', 'Bearer');
       writeJsonRpcError(res, 401, 'Unauthorized');
       return;

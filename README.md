@@ -200,6 +200,8 @@ node dist/index.js
 ## ChatGPT 연결
 
 ChatGPT UI나 Responses API의 remote MCP 서버로 붙일 때는 HTTP transport를 사용합니다.
+OpenAI Secure MCP Tunnel을 쓰는 자동 기동은 `npm run chatgptui`로 실행합니다
+(자세히는 [`docs/CHATGPT_TUNNEL_SETUP.md`](docs/CHATGPT_TUNNEL_SETUP.md)).
 v1은 **개인용 단일 사용자 서버**입니다. 서버가 실행되는 머신의 `ECLASS_USERNAME`과
 자격증명 저장소(OS 저장소 또는 암호화 파일)에 저장된 LMS 비밀번호를 사용하며, ChatGPT
 사용자별 OAuth linking은 아직 지원하지 않습니다. 헤드리스 Linux 서버라면 OS 저장소
@@ -283,8 +285,11 @@ HTTP 서버는 다음을 지원합니다.
 | `ALLOW_PLAINTEXT_ENV_SECRETS` | 꺼짐 | `1`일 때만 `ECLASS_PASSWORD` env 허용 |
 | `ECLASS_TRANSPORT` | `stdio` | `http`로 지정하면 remote MCP HTTP 서버 실행 |
 | `ECLASS_HTTP_PORT` / `PORT` | `8787` | HTTP transport 포트 |
-| `ECLASS_REMOTE_AUTH_TOKEN` | (없음) | 설정 시 `/mcp` Bearer token 인증 강제 |
+| `ECLASS_REMOTE_AUTH_TOKEN` | (없음) | 설정 시 `/mcp` Bearer 또는 `X-Eclass-Auth` 인증 강제 |
 | `ECLASS_HTTP_ALLOWED_ORIGINS` | Origin 요청 기본 거부 | HTTP CORS origin allowlist (콤마 구분) |
+| `CONTROL_PLANE_API_KEY` | (없음) | OpenAI tunnel 런타임 API 키 (Tunnels Read+Use). `npm run chatgptui`에서 사용 |
+| `CONTROL_PLANE_TUNNEL_ID` | (없음) | tunnel 식별자 (Platform Tunnels 발급) |
+| `ECLASS_TUNNEL_PROFILE_FILE` | `${XDG_CONFIG_HOME:-~/.config}/tunnel-client/eclass-mcp.yaml` | tunnel-client 프로파일 경로 오버라이드 |
 | `DEBUG` | 꺼짐 | `1`이면 stderr 디버그 로그 |
 
 ## 트러블슈팅
@@ -313,6 +318,7 @@ pnpm run discover # 엔드포인트 디스커버리 (docs/DISCOVERY.md)
 ## 문서
 
 - [`docs/TOOLS.md`](docs/TOOLS.md) — 전체 도구 명세 및 사용 흐름
+- [`docs/CHATGPT_TUNNEL_SETUP.md`](docs/CHATGPT_TUNNEL_SETUP.md) — ChatGPT Secure MCP Tunnel 셋업
 - [`docs/DISCOVERY.md`](docs/DISCOVERY.md) — eclass API 엔드포인트 디스커버리
 - [`docs/SELF_REPAIR.md`](docs/SELF_REPAIR.md) — 시험 파서 등 자가 점검·복구 절차
 
