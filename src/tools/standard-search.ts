@@ -1,4 +1,7 @@
+import { statSync } from 'node:fs';
 import type { BrowserSession } from '../browser-session.js';
+import { registerHandoff } from '../file-handoff-registry.js';
+import { inferMimeType } from './file-handoff.js';
 import type { CanvasClient } from '../canvas-client.js';
 import type { FileCache } from '../file-cache.js';
 import type { ExamCache } from '../exam-cache.js';
@@ -39,6 +42,10 @@ export type StandardToolContext = {
   session: BrowserSession;
   fileCache: FileCache;
   examCache: ExamCache;
+  // When set (HTTP transport), fetch on a download id returns a clickable
+  // download URL so ChatGPT can hand the file to the user without trying to
+  // read it as an MCP resource (which this server does not expose).
+  handoffBaseUrl?: string;
 };
 
 function includes(haystack: string | null | undefined, needle: string): boolean {
@@ -97,6 +104,14 @@ function courseTitle(course: Course): string {
 
 function jsonText(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+function statSizeOrZero(localPath: string): number {
+  try {
+    return statSync(localPath).size;
+  } catch {
+    return 0;
+  }
 }
 
 function parseEclassId(id: string): { kind: string; parts: string[]; params: URLSearchParams } {
@@ -316,19 +331,36 @@ export async function fetchEclassDocument(
     const fileId = parsed.parts[0];
     const record = context.fileCache.list().find((item) => item.file_id === fileId);
     if (!record) throw new Error(`Download record not found: ${fileId}`);
+    const sizeBytes = record.size_bytes > 0 ? record.size_bytes : statSizeOrZero(record.local_path);
+    let downloadUrl: string | undefined;
+    if (context.handoffBaseUrl) {
+      const token = registerHandoff({
+        localPath: record.local_path,
+        displayName: record.display_name,
+        mimeType: inferMimeType(record.display_name),
+        sizeBytes,
+      });
+      downloadUrl = `${context.handoffBaseUrl.replace(/\/$/, '')}/files/${token}`;
+    }
     return {
       id,
       title: `[다운로드] ${record.display_name}`,
-      text: jsonText({
-        file_id: record.file_id,
-        display_name: record.display_name,
-        local_path: record.local_path,
-        size_bytes: record.size_bytes,
-        downloaded_at: record.downloaded_at,
-        source: record.source,
-      }),
-      url: id,
-      metadata: { type: 'download', file_id: fileId },
+      text: downloadUrl
+        ? `${record.display_name} (${sizeBytes} bytes)\n\n다운로드 링크: ${downloadUrl}\n브라우저에서 이 URL을 열면 파일이 저장됩니다. 링크는 일정 시간 후 만료됩니다.`
+        : jsonText({
+            file_id: record.file_id,
+            display_name: record.display_name,
+            local_path: record.local_path,
+            size_bytes: record.size_bytes,
+            downloaded_at: record.downloaded_at,
+            source: record.source,
+          }),
+      url: downloadUrl ?? id,
+      metadata: {
+        type: 'download',
+        file_id: fileId,
+        ...(downloadUrl ? { download_url: downloadUrl } : {}),
+      },
     };
   }
 

@@ -871,13 +871,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'search': {
         const parsed = z.object({ query: z.string().min(1) }).parse(args ?? {});
-        const response = await searchEclassDocuments({ session, fileCache, examCache }, parsed.query);
+        const response = await searchEclassDocuments({ session, fileCache, examCache, handoffBaseUrl }, parsed.query);
         return { content: [{ type: 'text', text: JSON.stringify(response) }] };
       }
 
       case 'fetch': {
         const parsed = z.object({ id: z.string().min(1) }).parse(args ?? {});
-        const response = await fetchEclassDocument({ session, fileCache, examCache }, parsed.id);
+        const response = await fetchEclassDocument({ session, fileCache, examCache, handoffBaseUrl }, parsed.id);
         return { content: [{ type: 'text', text: JSON.stringify(response) }] };
       }
 
