@@ -320,7 +320,7 @@ export async function runSetup(
   console.log('');
 
   if (rawOptions.noDoctor) {
-    console.log('검차 생략 (--no-doctor)');
+    console.log('검사 생략 (--no-doctor)');
     return 0;
   }
 
@@ -330,7 +330,7 @@ export async function runSetup(
     envPassword: rawOptions.allowPlaintextEnv ? password : undefined,
     plaintextOverride: rawOptions.allowPlaintextEnv ? '1' : undefined,
   });
-  console.log('검차');
+  console.log('검사');
   console.log('─'.repeat(30));
   for (const result of checkResults) {
     const prefix = result.ok ? '✓' : '✗';
@@ -339,7 +339,7 @@ export async function runSetup(
 
   if (checkResults.some((result) => !result.ok)) {
     console.log('');
-    console.error('❌ 설정은 저장됐지만 검차에 실패했습니다. 위 항목을 확인하세요.');
+    console.error('❌ 설정은 저장됐지만 검사에 실패했습니다. 위 항목을 확인하세요.');
     return 1;
   }
 
