@@ -9,10 +9,12 @@ import {
   CREDENTIAL_BACKEND_ENV,
   ENC_STORE_PATH_ENV,
   SECRET_KEY_ENV,
+  SECRET_KEY_FILE_ENV,
   getCredential,
   setCredential,
   encryptSecretFile,
   decryptSecretFile,
+  resolveMasterKey,
 } from '../src/credential-store.js';
 
 test('credential store falls back to a 0600 file store', async () => {
@@ -52,4 +54,45 @@ test('encryptSecretFile/decryptSecretFile round-trips with AES-256-GCM', () => {
 test('decryptSecretFile rejects a wrong key', () => {
   const enc = encryptSecretFile(crypto.randomBytes(32), { a: { b: 'c' } });
   assert.throws(() => decryptSecretFile(crypto.randomBytes(32), enc));
+});
+
+test('resolveMasterKey reads base64 32-byte key from env', async () => {
+  const key = crypto.randomBytes(32);
+  process.env[SECRET_KEY_ENV] = key.toString('base64');
+  try {
+    const got = await resolveMasterKey();
+    assert.ok(got && got.equals(key));
+  } finally {
+    delete process.env[SECRET_KEY_ENV];
+  }
+});
+
+test('resolveMasterKey rejects a wrong-length env key', async () => {
+  process.env[SECRET_KEY_ENV] = Buffer.from('too-short').toString('base64');
+  try {
+    await assert.rejects(() => resolveMasterKey(), /32 bytes/);
+  } finally {
+    delete process.env[SECRET_KEY_ENV];
+  }
+});
+
+test('resolveMasterKey reads a raw 32-byte key file', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-key-'));
+  const keyPath = path.join(dir, 'master.key');
+  const key = crypto.randomBytes(32);
+  await fs.writeFile(keyPath, key, { mode: 0o600 });
+  process.env[SECRET_KEY_FILE_ENV] = keyPath;
+  try {
+    const got = await resolveMasterKey();
+    assert.ok(got && got.equals(key));
+  } finally {
+    delete process.env[SECRET_KEY_FILE_ENV];
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveMasterKey returns null when no key injected', async () => {
+  delete process.env[SECRET_KEY_ENV];
+  delete process.env[SECRET_KEY_FILE_ENV];
+  assert.equal(await resolveMasterKey(), null);
 });

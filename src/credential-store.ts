@@ -44,6 +44,28 @@ export function decryptSecretFile(key: Buffer, enc: EncFile): SecretFile {
   return JSON.parse(pt.toString('utf8')) as SecretFile;
 }
 
+function decodeBase64Key(value: string): Buffer {
+  const buf = Buffer.from(value, 'base64');
+  if (buf.length !== 32) {
+    throw new Error(`${SECRET_KEY_ENV} must be base64 of 32 bytes (decoded ${buf.length})`);
+  }
+  return buf;
+}
+
+export async function resolveMasterKey(): Promise<Buffer | null> {
+  const envKey = process.env[SECRET_KEY_ENV]?.trim();
+  if (envKey) return decodeBase64Key(envKey);
+
+  const keyFile = process.env[SECRET_KEY_FILE_ENV]?.trim();
+  if (keyFile) {
+    const raw = await fs.readFile(expandTilde(keyFile));
+    if (raw.length === 32) return raw; // raw 32-byte key
+    return decodeBase64Key(raw.toString('utf8').trim()); // otherwise base64 text
+  }
+
+  return null;
+}
+
 let keytarLoad: Promise<KeytarModule | null> | null = null;
 
 async function loadKeytar(): Promise<KeytarModule | null> {
