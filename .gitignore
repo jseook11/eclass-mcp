@@ -31,6 +31,9 @@ _workspace/
 !README.md
 !docs/
 !docs/**
+# bundled Claude Code skill (distributed with the server)
+!skills/
+!skills/**
 # but never commit personal LMS artifacts dropped into docs/ (assignment files, etc.)
 docs/*.pdf
 docs/*.hwp

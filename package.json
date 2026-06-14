@@ -35,6 +35,7 @@
     "start": "node dist/index.js",
     "setup": "tsx scripts/setup.ts",
     "doctor": "tsx scripts/doctor.ts",
+    "install:skill": "node scripts/install-skill.mjs",
     "discover": "tsx scripts/discover.ts",
     "install:browser": "npx playwright install chromium",
     "postinstall": "npm rebuild better-sqlite3 && npx playwright install chromium"
