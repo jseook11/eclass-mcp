@@ -37,12 +37,22 @@
 1. (특정 강의면) `eclass_get_courses_cached`로 매치. (C1)
 2. `eclass_get_grades`(전체) 또는 `eclass_get_grades { course_id }`(강의별 + 과제 점수). (C9)
 
-## 시험 시간표
+## 시험 시간표 (특정 강의)
 
 1. `eclass_get_courses_cached`로 강의를 매치한다. (C1)
 2. 필요 시 `eclass_sync_course_metadata { course_id }`로 메타데이터를 동기화한다. (C8)
 3. `eclass_get_exam_schedule { course_id }`로 조회한다. 실패 시 `candidates`를 보고
    사용자와 함께 판단한다. (C8)
+
+## 시험 일정 전체 ("X요일에 시험 있어?", "내 시험 언제")
+
+특정 강의가 아니라 내 전체 일정을 묻는 경우. 한 강의도 빠뜨리면 안 된다. (C10)
+
+1. `eclass_get_courses_cached`로 수강 강의 전체 목록을 확보한다. (C1)
+2. **모든** course_id에 대해 시험 일정을 확인한다 — 강의별 반복보다
+   `eclass_get_exam_schedule { term }`로 전체 schedule을 받아 내 강의와 대조하는 쪽이
+   누락이 적다. 강의별로 돌 경우 처리한 course_id 집합이 1번 목록과 일치하는지 점검한다. (C8, C10)
+3. 조회하지 않았거나 결과를 못 받은 강의는 "시험 없음"이라 단정하지 말고 그대로 밝힌다. (C10)
 
 ## 강의계획서
 

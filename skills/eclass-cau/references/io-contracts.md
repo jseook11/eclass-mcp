@@ -83,3 +83,17 @@
 `eclass_get_grades` / `eclass_list_downloads` / `eclass_get_download_status` /
 `eclass_search_downloads` / `eclass_list_exam_sources`.
 예외 — `eclass_get_announcements`·`eclass_export_course_snapshot`는 `course_id` ●.
+
+## C10 — 전수 조회와 음성 단정 금지
+
+특정 강의가 아니라 수강 전반을 묻는 질문("화요일에 시험 있어?", "내 성적 전체",
+"이번 주 과제")은 일부만 보고 답하면 안 된다.
+
+- **전수 처리**: `eclass_get_courses_cached`의 **모든** `course_id`를 빠짐없이
+  처리한다. 답하기 전에 "처리한 course_id 집합 == 전체 강의 목록"인지 교차 점검한다.
+  가능하면 강의별 반복 대신 한 번에 전체를 주는 호출을 쓴다(예: 시험은
+  `eclass_get_exam_schedule { term }`으로 전체 schedule을 받아 내 강의와 대조).
+- **음성 단정 금지**: 조회하지 않은 강의에 "없음/해당 없음"을 단정하지 않는다.
+  근거는 실제 조회한 결과뿐이다. "결과가 비어 있음"과 "조회하지 않음"은 다르다.
+- **묵시적 생략 금지**: 강의가 많아 일부만 확인했다면 침묵하지 말고
+  "N개 중 M개 확인, 나머지 미확인"처럼 범위를 드러낸다.
