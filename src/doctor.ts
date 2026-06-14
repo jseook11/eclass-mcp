@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
 
 import { BrowserSession } from './browser-session.js';
-import { getEclassPassword } from './secrets.js';
+import { getEclassPassword, KEYCHAIN_SERVICE } from './secrets.js';
+import { describeCredentialEnvironment, getCredential } from './credential-store.js';
 import {
   defaultHermesConfigPath,
   defaultMcpJsonPath,
@@ -101,6 +102,18 @@ async function checkEclassCourseresource(session: BrowserSession): Promise<Check
     const message = formatErrorDetail(err);
     return { name: 'eclass courseresource', ok: false, detail: message };
   }
+}
+
+export async function credentialBackendCheck(username: string): Promise<CheckResult> {
+  const diag = await describeCredentialEnvironment();
+  const found = (await getCredential(KEYCHAIN_SERVICE, username)) !== null;
+  const base =
+    `backend=${diag.backend} (${diag.reason}), keytar=${diag.keytarLoaded ? 'loaded' : 'unavailable'}` +
+    `${diag.keytarError ? `(${diag.keytarError})` : ''}, masterKey=${diag.masterKeyPresent ? 'yes' : 'no'}` +
+    `, dbus=${diag.dbusSession ? 'yes' : 'no'}`;
+  return found
+    ? { name: 'credential backend', ok: true, detail: `${base}, credential: found` }
+    : { name: 'credential backend', ok: false, detail: `${base}, credential: not found for ${username}` };
 }
 
 export type DoctorOptions = {
@@ -200,6 +213,8 @@ export async function runDoctor(
     });
     return results;
   }
+
+  results.push(await credentialBackendCheck(resolvedUsername));
 
   const credentialFactory = (): Promise<string> => getEclassPassword(
     resolvedUsername,

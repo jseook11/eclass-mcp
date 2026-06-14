@@ -16,7 +16,9 @@ eclass의 비표준 엔드포인트를 파악할 때 쓰는 개발용 도구. MC
 
 `npm run setup`을 마쳤다면 추가 설정 없이 터미널에서 바로 실행된다.
 `discover.ts`는 doctor와 같은 순서로 자격증명을 찾는다:
-셸 env → `~/.hermes/config.yaml` → `.mcp.json` (username), 비밀번호는 OS 키체인.
+셸 env → `~/.hermes/config.yaml` → `.mcp.json` (username), 비밀번호는 자격증명
+저장소(OS 키체인 또는 암호화 파일). 헤드리스 서버는 `ECLASS_CREDENTIAL_BACKEND=encrypted`와
+`ECLASS_SECRET_KEY`를 주입하면 `secrets.enc`에서 비밀번호를 읽는다(README의 "헤드리스 서버: 암호화 백엔드").
 
 그 외 수동 방법:
 

@@ -24,6 +24,7 @@
 - [동작 원리](#동작-원리)
 - [요구 사항](#요구-사항)
 - [빠른 시작](#빠른-시작)
+- [헤드리스 서버: 암호화 백엔드](#헤드리스-서버-암호화-백엔드)
 - [ChatGPT 연결](#chatgpt-연결)
 - [사용 예시](#사용-예시)
 - [보안](#보안)
@@ -112,7 +113,9 @@ flowchart TD
 
 - **Node.js 24.x** — `engines`로 강제하며 `preinstall`에서 버전을 확인합니다.
 - **pnpm**
-- **OS 자격증명 저장소** — macOS Keychain / Linux Secret Service(libsecret). LMS 비밀번호 저장용.
+- **자격증명 저장소** — 다음 중 하나에 LMS 비밀번호를 저장합니다.
+  - **OS 자격증명 저장소** — macOS Keychain / Linux Secret Service(libsecret). 데스크톱 환경 기본값.
+  - **암호화 파일 저장소**(`secrets.enc`) — Keychain/D-Bus가 없는 **헤드리스 Linux 서버**용. AES-256-GCM으로 암호화하고 마스터 키는 실행 시 env로 주입합니다(평문 저장 안 함). 자세한 내용은 [헤드리스 서버: 암호화 백엔드](#헤드리스-서버-암호화-백엔드).
 - **Playwright Chromium** — 자동 로그인·일부 자료 인터셉트용. `postinstall`에서 자동 설치됩니다.
 - **pdftotext**(poppler) — 시험 시간표·강의계획서 PDF 파싱용. 없으면 시험 동기화가 `EXAM_PARSER_UNAVAILABLE`을, 강의계획서 조회가 `SYLLABUS_PARSER_UNAVAILABLE`을 부분 실패로 남기고 **다른 기능은 정상 동작**합니다.
   - macOS: `brew install poppler`
@@ -137,7 +140,8 @@ pnpm run setup
   - `--target mcp-json` → 프로젝트의 `.mcp.json` (Claude Code 등)
   - `--target hermes` → Hermes config
   - `--target both`
-- 셋업 끝에 `doctor` 점검이 돌며 인증·브라우저·API 상태를 확인합니다(`--no-doctor`로 생략).
+  - `--target encrypted` → OS 저장소 대신 **암호화 파일 저장소**(`secrets.enc`)에 비밀번호 저장. 헤드리스 서버용 — [아래](#헤드리스-서버-암호화-백엔드) 참고.
+- 셋업 끝에 `doctor` 점검이 돌며 인증·브라우저·API 상태를 확인합니다(`--no-doctor`로 생략). `doctor`는 어떤 자격증명 백엔드가 선택됐고 비밀번호가 조회되는지도 함께 보고합니다.
 
 생성되는 MCP 서버 항목은 다음 형태입니다. `pnpm start`는 stdout 배너가 JSON-RPC를
 오염시키므로(`-32000`), 반드시 `node`로 직접 실행합니다.
@@ -156,15 +160,55 @@ pnpm run setup
 
 설정 후 MCP 클라이언트를 재시작(또는 재연결)하면 도구가 노출됩니다.
 
+## 헤드리스 서버: 암호화 백엔드
+
+Keychain도 D-Bus(libsecret)도 없는 헤드리스 Linux 서버에서는 OS 자격증명 저장소를
+쓸 수 없습니다. 이때는 비밀번호를 **AES-256-GCM으로 암호화한 파일**(`secrets.enc`,
+기본 경로 `~/.eclass-mcp/secrets.enc`)에 저장하고, **마스터 키는 디스크에 남기지 않은 채
+실행 시 env로 주입**합니다. 비밀번호는 어디에도 평문으로 저장되지 않습니다.
+
+```bash
+# 1) 암호화 백엔드로 셋업 — 마스터 키가 없으면 새로 생성해 한 번만 출력합니다.
+npm run setup -- --target encrypted
+#   → 출력된 ECLASS_SECRET_KEY 값을 비밀 관리 도구(또는 안전한 곳)에 보관하세요.
+#     이 키를 잃으면 secrets.enc 를 복호화할 수 없습니다.
+
+# 2) 이후 서버 실행 시마다 마스터 키를 주입합니다.
+ECLASS_USERNAME=<your-id> \
+ECLASS_CREDENTIAL_BACKEND=encrypted \
+ECLASS_SECRET_KEY=<base64-32byte-key> \
+node dist/index.js
+```
+
+마스터 키 주입 방식은 두 가지입니다.
+
+- `ECLASS_SECRET_KEY` — 32바이트 키의 **base64** 문자열.
+- `ECLASS_SECRET_KEY_FILE` — 키 파일 경로. **raw 32바이트** 또는 base64 텍스트 모두 인식합니다.
+
+백엔드 선택 규칙(`ECLASS_CREDENTIAL_BACKEND`):
+
+- 미설정(auto) — 마스터 키가 주입돼 있으면 `encrypted`, 아니면 keytar(가능 시), 둘 다
+  없으면 파일 저장소.
+- `encrypted` — 암호화 파일 저장소 강제. **마스터 키가 없으면 조용히 폴백하지 않고 오류**를 냅니다.
+- `keytar` — OS 저장소 강제.
+- `file` — (비권장) 평문 파일 저장소. `setup`은 평문 파일 저장을 **거부**합니다.
+
+상태가 헷갈리면 `npm run doctor`가 활성 백엔드·마스터 키 주입 여부·keytar 로드
+여부·비밀번호 조회 결과를 한 줄로 보고합니다. 비밀번호 조회 실패 시 오류 메시지에도
+어떤 백엔드가 쓰였고 다음에 무엇을 실행해야 하는지가 포함됩니다.
+
 ## ChatGPT 연결
 
 ChatGPT UI나 Responses API의 remote MCP 서버로 붙일 때는 HTTP transport를 사용합니다.
 v1은 **개인용 단일 사용자 서버**입니다. 서버가 실행되는 머신의 `ECLASS_USERNAME`과
-OS 자격증명 저장소(Keychain/libsecret)에 저장된 LMS 비밀번호를 사용하며, ChatGPT
-사용자별 OAuth linking은 아직 지원하지 않습니다.
+자격증명 저장소(OS 저장소 또는 암호화 파일)에 저장된 LMS 비밀번호를 사용하며, ChatGPT
+사용자별 OAuth linking은 아직 지원하지 않습니다. 헤드리스 Linux 서버라면 OS 저장소
+대신 [암호화 백엔드](#헤드리스-서버-암호화-백엔드)로 준비하고 실행 시 `ECLASS_SECRET_KEY`를
+함께 주입하세요.
 
 ```bash
 # 1) stdio 설정과 동일하게 credential store를 먼저 준비
+#    (헤드리스 서버는 `pnpm run setup -- --target encrypted`)
 pnpm run setup
 
 # 2) 빌드
@@ -217,7 +261,7 @@ HTTP 서버는 다음을 지원합니다.
 
 자격증명을 다루는 도구인 만큼 비밀 정보가 새지 않도록 설계했습니다.
 
-- 🔐 **비밀번호는 OS 자격증명 저장소에만** 저장됩니다(Keychain / libsecret). repo·설정 파일·로그 어디에도 평문으로 남지 않습니다.
+- 🔐 **비밀번호는 OS 자격증명 저장소**(Keychain / libsecret) **또는 AES-256-GCM 암호화 파일**(`secrets.enc`)에만 저장됩니다. 암호화 파일의 마스터 키는 디스크에 두지 않고 실행 시 env로 주입합니다. repo·설정 파일·로그 어디에도 비밀번호가 평문으로 남지 않으며, `setup`은 평문 파일 저장소를 **거부**합니다.
 - 🚫 **평문 env 비밀번호**(`ECLASS_PASSWORD`)는 `ALLOW_PLAINTEXT_ENV_SECRETS=1`로 **명시적으로 켰을 때만** 사용되고, 기본값에서는 무시됩니다.
 - 🙈 토큰·쿠키·CSRF·파일 바이트는 도구 결과나 디버그 로그에 노출되지 않습니다(과제 제출 결과에 토큰/쿠키/파일이 없음을 단언하는 테스트 포함).
 - ✅ **과제 제출은 기본 `dry_run`** 이고, 기제출 과제는 `confirm_resubmit` 없이는 거부하는 이중 제출 방지 게이트가 있습니다.
@@ -232,7 +276,10 @@ HTTP 서버는 다음을 지원합니다.
 | `ECLASS_DOWNLOAD_DIR` | `~/Downloads/eclass` | 다운로드 저장 위치 |
 | `ECLASS_DB_PATH` | `~/.eclass-mcp/files.db` | 다운로드/강의 캐시 DB |
 | `ECLASS_EXAM_DB_PATH` | `~/.eclass-mcp/exams.db` | 시험 시간표 전용 DB |
-| `ECLASS_CREDENTIAL_BACKEND` | keytar (가능 시) | `file` 지정 시 파일 저장소 강제 |
+| `ECLASS_CREDENTIAL_BACKEND` | auto | `encrypted` / `keytar` / `file` 강제. auto는 마스터 키 있으면 encrypted, 아니면 keytar, 둘 다 없으면 file |
+| `ECLASS_SECRET_KEY` | (없음) | 암호화 백엔드 마스터 키(32바이트 base64). 실행 시 주입 |
+| `ECLASS_SECRET_KEY_FILE` | (없음) | 마스터 키 파일 경로(raw 32바이트 또는 base64 텍스트) |
+| `ECLASS_ENC_STORE_PATH` | `~/.eclass-mcp/secrets.enc` | 암호화 비밀번호 파일 경로 |
 | `ALLOW_PLAINTEXT_ENV_SECRETS` | 꺼짐 | `1`일 때만 `ECLASS_PASSWORD` env 허용 |
 | `ECLASS_TRANSPORT` | `stdio` | `http`로 지정하면 remote MCP HTTP 서버 실행 |
 | `ECLASS_HTTP_PORT` / `PORT` | `8787` | HTTP transport 포트 |
@@ -248,7 +295,8 @@ HTTP 서버는 다음을 지원합니다.
 | 도구가 안 보임 / 실행 안 됨 | `pnpm run build`로 `dist/`를 먼저 빌드했는지, 클라이언트를 재시작했는지 확인하세요. |
 | 시험·강의계획서 PDF 파싱이 비어 있음 | `pdftotext`(poppler)가 없을 때입니다. macOS는 `brew install poppler`. 다른 기능은 정상 동작합니다. |
 | 첫 실행 시 키체인 접근 권한 요청 | OS 자격증명 저장소 접근 권한을 허용해야 토큰을 캐시할 수 있습니다. |
-| 로그인·인증이 계속 실패 | `pnpm run doctor`로 인증·브라우저·API 상태를 점검하세요. |
+| 헤드리스 서버에서 비밀번호를 못 찾음(`Password not found ... backend=...`) | Keychain/D-Bus가 없는 환경입니다. `npm run setup -- --target encrypted`로 암호화 저장소를 만들고, 실행 시 `ECLASS_CREDENTIAL_BACKEND=encrypted`와 `ECLASS_SECRET_KEY`를 주입하세요. 오류 메시지가 활성 백엔드와 다음 조치를 알려줍니다. [암호화 백엔드](#헤드리스-서버-암호화-백엔드) 참고. |
+| 로그인·인증이 계속 실패 | `pnpm run doctor`로 인증·브라우저·API·자격증명 백엔드 상태를 점검하세요. |
 
 ## 개발
 

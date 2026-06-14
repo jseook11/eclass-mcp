@@ -4,13 +4,19 @@
  * 사용: pnpm run setup -- [--target hermes|mcp-json|both]
  */
 import { execFile } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as readline from 'node:readline';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { setCredential } from '../src/credential-store.js';
+import {
+  setCredential,
+  resolveMasterKey,
+  SECRET_KEY_ENV,
+  CREDENTIAL_BACKEND_ENV,
+} from '../src/credential-store.js';
 import {
   defaultHermesConfigPath,
   defaultMcpJsonPath,
@@ -29,7 +35,7 @@ const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-type SetupTarget = 'hermes' | 'mcp-json' | 'both';
+type SetupTarget = 'hermes' | 'mcp-json' | 'both' | 'encrypted';
 
 type SetupOptions = {
   target?: SetupTarget;
@@ -40,7 +46,7 @@ type SetupOptions = {
   configPath?: string;
 };
 
-function parseArgs(argv: string[]): SetupOptions {
+export function parseArgs(argv: string[]): SetupOptions {
   const options: SetupOptions = {
     passwordStdin: false,
     allowPlaintextEnv: false,
@@ -52,8 +58,13 @@ function parseArgs(argv: string[]): SetupOptions {
     switch (arg) {
       case '--target': {
         const value = argv[++index] as SetupTarget | undefined;
-        if (value !== 'hermes' && value !== 'mcp-json' && value !== 'both') {
-          throw new Error('--target 값은 hermes, mcp-json, both 중 하나여야 합니다.');
+        if (
+          value !== 'hermes' &&
+          value !== 'mcp-json' &&
+          value !== 'both' &&
+          value !== 'encrypted'
+        ) {
+          throw new Error('--target 값은 hermes, mcp-json, both, encrypted 중 하나여야 합니다.');
         }
         options.target = value;
         break;
@@ -242,6 +253,20 @@ export async function runSetup(
     return 1;
   }
 
+  if (target === 'encrypted') {
+    let masterKey = await resolveMasterKey();
+    if (!masterKey) {
+      masterKey = crypto.randomBytes(32);
+      const b64 = masterKey.toString('base64');
+      process.env[SECRET_KEY_ENV] = b64;
+      console.error('🔑 새 마스터 키를 생성했습니다(디스크에 저장되지 않음):');
+      console.error(`   ${SECRET_KEY_ENV}=${b64}`);
+      console.error('   서버 기동 시 이 값을 환경변수로 주입하거나 0o600 키파일로 저장하세요.');
+      console.error('   이 키를 잃어버리면 저장된 비밀번호를 복호화할 수 없습니다.');
+    }
+    process.env[CREDENTIAL_BACKEND_ENV] = 'encrypted';
+  }
+
   if (rawOptions.allowPlaintextEnv) {
     console.error('⚠️  ECLASS_PASSWORD를 MCP config env에 plaintext로 저장합니다.');
     console.error('   Hermes client에서 env가 보일 수 있으므로 권장하지 않습니다.');
@@ -249,7 +274,11 @@ export async function runSetup(
   } else {
     try {
       await setCredential(KEYCHAIN_SERVICE, username, password, { allowFileFallback: false });
-      summary.push('LMS password: stored in OS credential store');
+      summary.push(
+        target === 'encrypted'
+          ? 'LMS password: stored in encrypted file (secrets.enc)'
+          : 'LMS password: stored in OS credential store',
+      );
     } catch (err) {
       console.error(formatCredentialStoreFailure(err));
       return 1;
@@ -291,7 +320,7 @@ export async function runSetup(
   console.log('');
 
   if (rawOptions.noDoctor) {
-    console.log('검차 생략 (--no-doctor)');
+    console.log('검사 생략 (--no-doctor)');
     return 0;
   }
 
@@ -301,7 +330,7 @@ export async function runSetup(
     envPassword: rawOptions.allowPlaintextEnv ? password : undefined,
     plaintextOverride: rawOptions.allowPlaintextEnv ? '1' : undefined,
   });
-  console.log('검차');
+  console.log('검사');
   console.log('─'.repeat(30));
   for (const result of checkResults) {
     const prefix = result.ok ? '✓' : '✗';
@@ -310,7 +339,7 @@ export async function runSetup(
 
   if (checkResults.some((result) => !result.ok)) {
     console.log('');
-    console.error('❌ 설정은 저장됐지만 검차에 실패했습니다. 위 항목을 확인하세요.');
+    console.error('❌ 설정은 저장됐지만 검사에 실패했습니다. 위 항목을 확인하세요.');
     return 1;
   }
 
