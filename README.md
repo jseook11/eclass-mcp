@@ -192,8 +192,9 @@ HTTP 서버는 다음을 지원합니다.
 - `POST/GET/DELETE /mcp` — MCP Streamable HTTP transport
 - `ECLASS_REMOTE_AUTH_TOKEN` — 설정 시 `Authorization: Bearer <token>`이 없는 `/mcp`
   요청을 거부
-- `ECLASS_HTTP_ALLOWED_ORIGINS` — 콤마로 구분한 CORS origin allowlist. 미설정 시 개발
-  편의를 위해 `*`
+- `ECLASS_HTTP_ALLOWED_ORIGINS` — 콤마로 구분한 CORS origin allowlist. 미설정 시 DNS
+  리바인딩/로컬 CSRF 방지를 위해 `Origin` 헤더가 있는 브라우저 요청은 거부하고,
+  `Origin` 없는 MCP 클라이언트 요청만 허용
 
 로컬에서만 시험할 때는 `pnpm run dev:http`를 사용할 수 있고, 빌드 후에는
 `pnpm run start:http`가 `node dist/index.js --http --port 8787`을 실행합니다.
@@ -236,7 +237,7 @@ HTTP 서버는 다음을 지원합니다.
 | `ECLASS_TRANSPORT` | `stdio` | `http`로 지정하면 remote MCP HTTP 서버 실행 |
 | `ECLASS_HTTP_PORT` / `PORT` | `8787` | HTTP transport 포트 |
 | `ECLASS_REMOTE_AUTH_TOKEN` | (없음) | 설정 시 `/mcp` Bearer token 인증 강제 |
-| `ECLASS_HTTP_ALLOWED_ORIGINS` | `*` | HTTP CORS origin allowlist (콤마 구분) |
+| `ECLASS_HTTP_ALLOWED_ORIGINS` | Origin 요청 기본 거부 | HTTP CORS origin allowlist (콤마 구분) |
 | `DEBUG` | 꺼짐 | `1`이면 stderr 디버그 로그 |
 
 ## 트러블슈팅

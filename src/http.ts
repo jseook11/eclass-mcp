@@ -1,5 +1,6 @@
 import { createServer as createNodeServer } from 'node:http';
 import type { IncomingMessage, Server as NodeHttpServer, ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 
@@ -21,8 +22,8 @@ function parseAllowedOrigins(raw: string | undefined): Set<string> | null {
 
 function originForRequest(req: IncomingMessage, allowedOrigins: Set<string> | null): string | null {
   const origin = req.headers.origin;
-  if (!origin) return allowedOrigins ? null : '*';
-  if (!allowedOrigins) return '*';
+  if (!origin) return null;
+  if (!allowedOrigins) return null;
   return allowedOrigins.has(origin) ? origin : null;
 }
 
@@ -45,7 +46,9 @@ function hasValidBearer(req: IncomingMessage, expected: string | undefined): boo
   if (!expected) return true;
   const auth = req.headers.authorization;
   if (!auth?.startsWith('Bearer ')) return false;
-  return auth.slice('Bearer '.length) === expected;
+  const actualBuffer = Buffer.from(auth.slice('Bearer '.length), 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 function writeJsonRpcError(res: ServerResponse, status: number, message: string): void {

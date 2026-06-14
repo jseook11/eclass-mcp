@@ -15,6 +15,7 @@ import { getAssignmentDetail } from './get-assignment-detail.js';
 const BASE_URL = 'https://eclass3.cau.ac.kr';
 const MAX_RESULTS = 20;
 const MAX_COURSES_TO_SCAN = 3;
+const SEARCH_TIMEOUT_MS = 15_000;
 
 export type SearchResult = {
   id: string;
@@ -58,6 +59,21 @@ async function bestEffort<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
   }
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  if (ms <= 0) return fallback;
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timeout = setTimeout(() => resolve(fallback), ms);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 async function loadCourses(client: CanvasClient, fileCache: FileCache): Promise<Course[]> {
   const live = await bestEffort(async () => {
     const courses = await getCourses(client);
@@ -97,11 +113,20 @@ export async function searchEclassDocuments(
   context: StandardToolContext,
   query: string,
 ): Promise<SearchResponse> {
+  const deadline = Date.now() + SEARCH_TIMEOUT_MS;
+  const remaining = () => deadline - Date.now();
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return { results: [] };
 
   const client = await context.session.getClient();
-  const courses = await loadCourses(client, context.fileCache);
+  const courses = await withTimeout(
+    loadCourses(client, context.fileCache),
+    remaining(),
+    context.fileCache.listCachedCourses().map((course) => ({
+      id: course.course_id,
+      name: course.name,
+    })),
+  );
   const results: SearchResult[] = [];
 
   for (const course of courses) {
@@ -114,9 +139,16 @@ export async function searchEclassDocuments(
     }
   }
 
-  for (const course of courses) {
+  const assignmentGroups = await withTimeout(
+    Promise.all(courses.map(async (course) => ({
+      course,
+      assignments: await bestEffort(() => getAssignments(client, course.id, 365, true), []),
+    }))),
+    remaining(),
+    [],
+  );
+  for (const { course, assignments } of assignmentGroups) {
     if (results.length >= MAX_RESULTS) break;
-    const assignments = await bestEffort(() => getAssignments(client, course.id, 365, true), []);
     for (const assignment of assignments) {
       if (!includes(`${course.name} ${assignment.title}`, normalizedQuery)) continue;
       if (!assignment.assignment_id) continue;
@@ -147,7 +179,12 @@ export async function searchEclassDocuments(
     .slice(0, MAX_COURSES_TO_SCAN);
 
   for (const course of scannedCourses) {
-    const announcements = await bestEffort(() => getAnnouncements(client, course.id, 10), []);
+    if (remaining() <= 0) break;
+    const announcements = await withTimeout(
+      bestEffort(() => getAnnouncements(client, course.id, 10), []),
+      remaining(),
+      [],
+    );
     for (const announcement of announcements) {
       if (!includes(`${announcement.title} ${announcement.message}`, normalizedQuery)) continue;
       addUnique(results, {
@@ -157,14 +194,18 @@ export async function searchEclassDocuments(
       });
     }
 
-    const materials = await bestEffort(
-      () => getMaterials(
-        client,
-        context.session,
-        course.id,
-        ['modules', 'files', 'courseresource', 'announcements'] as MaterialSource[],
-        context.fileCache,
+    const materials = await withTimeout(
+      bestEffort(
+        () => getMaterials(
+          client,
+          context.session,
+          course.id,
+          ['modules', 'files', 'courseresource', 'announcements'] as MaterialSource[],
+          context.fileCache,
+        ),
+        null,
       ),
+      remaining(),
       null,
     );
     if (materials?.materials) {
@@ -179,8 +220,12 @@ export async function searchEclassDocuments(
     }
   }
 
-  const syllabus = await bestEffort(
-    () => searchSyllabusList(context.session, { query, by: 'subject' }),
+  const syllabus = await withTimeout(
+    bestEffort(
+      () => searchSyllabusList(context.session, { query, by: 'subject' }),
+      { ok: false as const, error_code: 'SYLLABUS_SEARCH_FAILED', message: 'best-effort search failed' },
+    ),
+    remaining(),
     { ok: false as const, error_code: 'SYLLABUS_SEARCH_FAILED', message: 'best-effort search failed' },
   );
   if (syllabus.ok) {
@@ -221,6 +266,7 @@ export async function fetchEclassDocument(
   if (parsed.kind === 'assignment' && parsed.parts.length >= 2) {
     const [rawCourseId, rawAssignmentId] = parsed.parts;
     if (rawCourseId === 'unknown') {
+      // Legacy guard for planner-derived IDs emitted before search returned exact course IDs.
       throw new Error('Assignment id does not include course_id; call eclass_get_courses/eclass_get_assignments with course_id for exact fetch.');
     }
     const courseId = Number(rawCourseId);

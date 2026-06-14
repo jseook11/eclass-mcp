@@ -40,6 +40,8 @@ ChatGPT Company Knowledge / connector-like 호환용 표준 검색 도구. eclas
   - `eclass://syllabus/<year>/<term>/<course_code>/<section>?campcd=...&sust=...`
   - `eclass://download/<file_id>`
 - 검색 중 일부 source가 실패해도 가능한 결과를 반환한다.
+- 응답 지연을 막기 위해 전체 검색은 제한된 시간 예산 안에서 best-effort로 동작한다.
+  공지/자료 본문 스캔은 검색어가 강의명과 일치하는 일부 강의로 제한된다.
 
 ### fetch
 

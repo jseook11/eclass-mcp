@@ -23,6 +23,8 @@ const readOnlyTools = new Set([
 ]);
 
 const destructiveTools = new Set([
+  'eclass_export_course_snapshot',
+  'eclass_submit_assignment',
   'eclass_remove_download',
 ]);
 
@@ -59,7 +61,7 @@ function annotationsFor(name: string): ToolAnnotations {
 export const standardSearchTool: Tool = {
   name: 'search',
   title: 'Search eclass',
-  description: '[표준] eclass 강의, 과제, 공지, 자료, 강의계획서, 로컬 다운로드 기록을 통합 검색합니다. ChatGPT/connector 호환용 read-only search 도구입니다.',
+  description: '[표준] eclass 강의, 과제, 공지, 자료, 강의계획서, 로컬 다운로드 기록을 통합 검색합니다. ChatGPT/connector 호환용 read-only search 도구입니다. 공지/자료 본문 스캔은 비용 제어를 위해 검색어가 강의명과 일치하는 일부 강의로 제한됩니다.',
   annotations: annotationsFor('search'),
   inputSchema: {
     type: 'object',
