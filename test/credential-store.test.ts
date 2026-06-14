@@ -18,6 +18,7 @@ import {
   resolveBackend,
   describeCredentialEnvironment,
 } from '../src/credential-store.js';
+import { credentialBackendCheck } from '../src/doctor.js';
 
 test('credential store falls back to a 0600 file store', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-credentials-'));
@@ -154,5 +155,40 @@ test('auto backend selects encrypted when a master key is present', async () => 
     assert.equal(backend, 'encrypted');
   } finally {
     delete process.env[SECRET_KEY_ENV];
+  }
+});
+
+test('credentialBackendCheck reports ok when credential is found', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-doc-'));
+  process.env[CREDENTIAL_BACKEND_ENV] = 'encrypted';
+  process.env[ENC_STORE_PATH_ENV] = path.join(dir, 'secrets.enc');
+  process.env[SECRET_KEY_ENV] = crypto.randomBytes(32).toString('base64');
+  try {
+    await setCredential('eclass-mcp', 'alice', 'pw');
+    const res = await credentialBackendCheck('alice');
+    assert.equal(res.ok, true);
+    assert.match(res.detail, /encrypted/);
+  } finally {
+    delete process.env[CREDENTIAL_BACKEND_ENV];
+    delete process.env[ENC_STORE_PATH_ENV];
+    delete process.env[SECRET_KEY_ENV];
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('credentialBackendCheck reports not-ok when credential missing', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-doc2-'));
+  process.env[CREDENTIAL_BACKEND_ENV] = 'encrypted';
+  process.env[ENC_STORE_PATH_ENV] = path.join(dir, 'secrets.enc');
+  process.env[SECRET_KEY_ENV] = crypto.randomBytes(32).toString('base64');
+  try {
+    const res = await credentialBackendCheck('nobody');
+    assert.equal(res.ok, false);
+    assert.match(res.detail, /not found|없음/);
+  } finally {
+    delete process.env[CREDENTIAL_BACKEND_ENV];
+    delete process.env[ENC_STORE_PATH_ENV];
+    delete process.env[SECRET_KEY_ENV];
+    await fs.rm(dir, { recursive: true, force: true });
   }
 });
