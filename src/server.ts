@@ -19,7 +19,8 @@ import { getDownloadStatus } from './tools/get-download-status.js';
 import { getAssignmentDetail } from './tools/get-assignment-detail.js';
 import { getGrades } from './tools/get-grades.js';
 import { searchDownloads } from './tools/search-downloads.js';
-import { handoffFile, resolveHandoffMaxBytes } from './tools/file-handoff.js';
+import { handoffFile, inferMimeType, resolveHandoffMaxBytes } from './tools/file-handoff.js';
+import { registerHandoff } from './file-handoff-registry.js';
 import { exportCourseSnapshot } from './tools/export-snapshot.js';
 import { submitAssignment } from './tools/submit-assignment.js';
 import { downloadOne } from './tools/download.js';
@@ -41,9 +42,12 @@ export type EclassServerContext = {
   session: BrowserSession;
   fileCache: FileCache;
   examCache: ExamCache;
+  // When set (HTTP transport), eclass_file_handoff returns a download URL under
+  // this base instead of an inline base64 blob, keeping files out of context.
+  handoffBaseUrl?: string;
 };
 
-export function createEclassServer({ username, session, fileCache, examCache }: EclassServerContext): Server {
+export function createEclassServer({ username, session, fileCache, examCache, handoffBaseUrl }: EclassServerContext): Server {
   const server = new Server(
     { name: "eclass-mcp", version: "0.1.0" },
     {
@@ -847,6 +851,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           },
           readFile: (p) => fs.readFileSync(p),
           maxBytes: resolveHandoffMaxBytes(process.env),
+          registerUrl: handoffBaseUrl
+            ? (record, sizeBytes) => {
+                const token = registerHandoff({
+                  localPath: record.local_path,
+                  displayName: record.display_name,
+                  mimeType: inferMimeType(record.display_name),
+                  sizeBytes,
+                });
+                return `${handoffBaseUrl.replace(/\/$/, '')}/files/${token}`;
+              }
+            : undefined,
         });
         if (!outcome.ok) {
           return { isError: true, content: [{ type: 'text', text: JSON.stringify(outcome.error) }] };

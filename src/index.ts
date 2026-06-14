@@ -98,9 +98,14 @@ async function main(): Promise<void> {
 
   if (options.transport === 'http') {
     const context = createRuntimeContext(username);
+    // File handoff returns a download URL under this base (browser on the same
+    // machine fetches localhost directly; the tunnel only forwards /mcp).
+    // Override for headless hosts where 127.0.0.1 is not reachable by the user.
+    const handoffBaseUrl =
+      process.env.ECLASS_HANDOFF_BASE_URL?.trim() || `http://127.0.0.1:${options.port}`;
     await startHttpServer({
       port: options.port,
-      createServer: () => createEclassServer({ username, ...context }),
+      createServer: () => createEclassServer({ username, ...context, handoffBaseUrl }),
       authToken: process.env.ECLASS_REMOTE_AUTH_TOKEN,
       allowedOrigins: process.env.ECLASS_HTTP_ALLOWED_ORIGINS,
     });
