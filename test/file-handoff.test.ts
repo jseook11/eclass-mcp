@@ -137,6 +137,8 @@ test('buildFileHandoffUrl returns a text link, never a base64 blob', () => {
   const [block] = result.content;
   assert.equal(block.type, 'text');
   assert.ok(block.type === 'text' && block.text.includes('http://127.0.0.1:8787/files/abc'));
+  assert.ok(block.type === 'text' && block.text.includes('파일 URL:'));
+  assert.ok(block.type === 'text' && block.text.includes('열어 파일을 읽거나 다운로드'));
 });
 
 test('handoffFile uses URL mode (no readFile) when registerUrl is provided', () => {

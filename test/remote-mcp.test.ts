@@ -160,6 +160,7 @@ test('HTTP /files/<token> streams a registered handoff file without bearer auth'
     const ok = await fetch(`${baseUrl}/files/${token}`);
     assert.equal(ok.status, 200);
     assert.equal(ok.headers.get('content-type'), 'application/pdf');
+    assert.match(ok.headers.get('content-disposition') ?? '', /^inline;/);
     assert.match(ok.headers.get('content-disposition') ?? '', /filename\*=UTF-8''/);
     assert.equal(await ok.text(), 'hello-world');
 

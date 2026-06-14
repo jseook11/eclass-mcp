@@ -30,7 +30,8 @@ test('fetch on a download returns a clickable URL when handoffBaseUrl is set', a
     contextWith({ handoffBaseUrl: 'http://127.0.0.1:8787' }),
     'eclass://download/3636147',
   );
-  assert.match(res.text, /다운로드 링크: http:\/\/127\.0\.0\.1:8787\/files\//);
+  assert.match(res.text, /파일 URL: http:\/\/127\.0\.0\.1:8787\/files\//);
+  assert.match(res.text, /열어 파일을 읽거나 다운로드/);
   assert.match(res.url, /^http:\/\/127\.0\.0\.1:8787\/files\//);
   assert.ok(res.metadata?.download_url?.startsWith('http://127.0.0.1:8787/files/'));
   // No server-side local path leaked into the model context.

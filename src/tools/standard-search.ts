@@ -346,7 +346,7 @@ export async function fetchEclassDocument(
       id,
       title: `[다운로드] ${record.display_name}`,
       text: downloadUrl
-        ? `${record.display_name} (${sizeBytes} bytes)\n\n다운로드 링크: ${downloadUrl}\n브라우저에서 이 URL을 열면 파일이 저장됩니다. 링크는 일정 시간 후 만료됩니다.`
+        ? `${record.display_name} (${sizeBytes} bytes)\n\n파일 URL: ${downloadUrl}\nChatGPT 브라우징 또는 브라우저에서 이 URL을 열어 파일을 읽거나 다운로드할 수 있습니다. 링크는 일정 시간 후 만료됩니다.`
         : jsonText({
             file_id: record.file_id,
             display_name: record.display_name,

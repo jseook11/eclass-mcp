@@ -85,7 +85,7 @@ function handleDownload(req: IncomingMessage, res: ServerResponse, token: string
   res.writeHead(200, {
     'content-type': entry.mimeType,
     'content-length': String(size),
-    'content-disposition': `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`,
+    'content-disposition': `inline; filename="${asciiName}"; filename*=UTF-8''${encodedName}`,
   });
 
   const stream = createReadStream(entry.localPath);

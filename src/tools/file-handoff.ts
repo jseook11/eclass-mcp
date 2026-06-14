@@ -85,7 +85,7 @@ export function buildFileHandoffUrl(
     content: [
       {
         type: 'text',
-        text: `파일 다운로드 링크: ${url}\n파일명: ${record.display_name} (${sizeBytes} bytes)\n브라우저에서 이 URL을 열면 저장됩니다. 링크는 일정 시간 후 만료됩니다.`,
+        text: `파일 URL: ${url}\n파일명: ${record.display_name} (${sizeBytes} bytes)\nChatGPT 브라우징 또는 브라우저에서 이 URL을 열어 파일을 읽거나 다운로드할 수 있습니다. 링크는 일정 시간 후 만료됩니다.`,
       },
     ],
   };
