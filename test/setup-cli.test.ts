@@ -1,10 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import YAML from 'yaml';
+
+import { parseArgs } from '../scripts/setup.js';
 
 function runSetupCli(
   args: string[],
@@ -29,6 +32,32 @@ function runSetupCli(
     child.stdin.end(input);
   });
 }
+
+test('parseArgs accepts --target encrypted', () => {
+  const opts = parseArgs(['--target', 'encrypted', '--username', 'alice']);
+  assert.equal(opts.target, 'encrypted');
+  assert.equal(opts.username, 'alice');
+});
+
+test('setup --target encrypted stores ciphertext in secrets.enc', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-setup-enc-'));
+  const encPath = path.join(dir, 'secrets.enc');
+  const result = await runSetupCli([
+    '--target', 'encrypted',
+    '--username', 'enc_user',
+    '--password-stdin',
+    '--no-doctor',
+  ], 'topsecretpw\n', {
+    ECLASS_CREDENTIAL_BACKEND: 'encrypted',
+    ECLASS_SECRET_KEY: crypto.randomBytes(32).toString('base64'),
+    ECLASS_ENC_STORE_PATH: encPath,
+  });
+  assert.equal(result.code, 0, result.output);
+  const onDisk = await fs.readFile(encPath, 'utf8');
+  assert.ok(!onDisk.includes('topsecretpw'), 'plaintext password must not appear on disk');
+  assert.match(onDisk, /"iv"/);
+  await fs.rm(dir, { recursive: true, force: true });
+});
 
 test('setup does not require .mcp.json when Hermes config exists', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-setup-'));
