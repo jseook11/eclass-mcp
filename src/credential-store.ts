@@ -251,8 +251,13 @@ export async function setCredential(
       if (options.allowFileFallback === false) throw err;
     }
   }
-  if (options.allowFileFallback === false && backend !== 'file') {
-    throw new Error('OS credential store is unavailable');
+  // 여기 도달 = encrypted/keytar 성공 경로를 모두 지나 평문 파일 store 에 쓰기 직전.
+  // allowFileFallback:false 면 백엔드 해석 결과(명시적 file 포함)와 무관하게 거부한다.
+  if (options.allowFileFallback === false) {
+    throw new Error(
+      'Refusing to store secret in the plaintext file backend ' +
+      '(set ECLASS_CREDENTIAL_BACKEND=encrypted with ECLASS_SECRET_KEY, or make keytar available)',
+    );
   }
   const file = await readSecretFile();
   (file[encodeKey(service)] ??= {})[encodeKey(account)] = password;

@@ -158,6 +158,24 @@ test('auto backend selects encrypted when a master key is present', async () => 
   }
 });
 
+test('setCredential refuses the plaintext file backend when allowFileFallback is false', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-nofile-'));
+  process.env[CREDENTIAL_BACKEND_ENV] = 'file';
+  process.env.ECLASS_SECRET_STORE_PATH = path.join(dir, 'secrets.json');
+  try {
+    await assert.rejects(
+      () => setCredential('svc', 'acct', 'pw', { allowFileFallback: false }),
+      /plaintext file backend/,
+    );
+    // 거부됐으므로 파일이 생성되지 않아야 한다(평문 미기록).
+    await assert.rejects(() => fs.stat(path.join(dir, 'secrets.json')));
+  } finally {
+    delete process.env[CREDENTIAL_BACKEND_ENV];
+    delete process.env.ECLASS_SECRET_STORE_PATH;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('credentialBackendCheck reports ok when credential is found', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'eclass-doc-'));
   process.env[CREDENTIAL_BACKEND_ENV] = 'encrypted';
