@@ -96,6 +96,44 @@ test('HTTP /mcp enforces optional bearer auth', async () => {
   }
 });
 
+test('HTTP /mcp accepts X-Eclass-Auth as an alternative to bearer', async () => {
+  const httpServer = await startHttpServer({
+    port: 0,
+    authToken: 'test-token',
+    createServer: createEmptyServer,
+  });
+  const address = httpServer.address();
+  assert(address && typeof address === 'object');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const viaHeader = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'x-eclass-auth': 'test-token',
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+      },
+      body: initializeBody(),
+    });
+    assert.equal(viaHeader.status, 200);
+
+    const wrongHeader = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST',
+      headers: {
+        'x-eclass-auth': 'nope',
+        accept: 'application/json, text/event-stream',
+        'content-type': 'application/json',
+      },
+      body: initializeBody(),
+    });
+    assert.equal(wrongHeader.status, 401);
+  } finally {
+    httpServer.close();
+    await once(httpServer, 'close');
+  }
+});
+
 test('HTTP /mcp denies browser origins by default without breaking no-origin MCP clients', async () => {
   const httpServer = await startHttpServer({
     port: 0,
