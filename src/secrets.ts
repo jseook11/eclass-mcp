@@ -1,4 +1,4 @@
-import { getCredential } from './credential-store.js';
+import { getCredential, describeCredentialEnvironment } from './credential-store.js';
 
 export const KEYCHAIN_SERVICE = 'eclass-mcp';
 export const PLAINTEXT_ENV_OVERRIDE_FLAG = 'ALLOW_PLAINTEXT_ENV_SECRETS';
@@ -64,5 +64,12 @@ export async function getEclassPassword(
   const keychainSecret = await getSecretFromKeychain(username, passwordGetter);
   if (keychainSecret) return keychainSecret;
 
-  throw new Error('Password not found in credential store — run npm run setup');
+  const diag = await describeCredentialEnvironment();
+  throw new Error(
+    `Password not found in credential store ` +
+    `(backend=${diag.backend}, masterKey=${diag.masterKeyPresent ? 'yes' : 'no'}, ` +
+    `keytar=${diag.keytarLoaded ? 'loaded' : 'unavailable'}, user=${username}). ` +
+    `Next: run npm run setup --target ${diag.backend === 'encrypted' ? 'encrypted' : 'mcp-json'} ` +
+    `or inject ECLASS_SECRET_KEY for the encrypted backend.`,
+  );
 }

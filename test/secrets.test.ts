@@ -33,6 +33,14 @@ test('getEclassPassword uses keyed username account', async () => {
   assert.equal(password, 'pw');
 });
 
+test('getEclassPassword error names the active backend and next action', async () => {
+  const noop = async () => null;
+  await assert.rejects(
+    () => getEclassPassword('alice', undefined, noop, undefined),
+    (err: Error) => /backend=/.test(err.message) && /setup/.test(err.message),
+  );
+});
+
 test('getSecretEnvWarning distinguishes ignored and active env secrets', () => {
   delete process.env.ALLOW_PLAINTEXT_ENV_SECRETS;
   assert.match(
