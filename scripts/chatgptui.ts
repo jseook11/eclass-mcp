@@ -1,11 +1,26 @@
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 
 import { classifyDoctorResult, type DoctorClassification } from '../src/chatgptui/doctor.js';
 import { runChatgptui, type ChildLike } from '../src/chatgptui/orchestrator.js';
 import { stopFromPidFile, writePidFile } from '../src/chatgptui/pidfile.js';
 import { ensureTunnelProfile } from '../src/chatgptui/profile.js';
+
+// Convenience: load runtime env from a local .env.chatgptui if present, so the
+// operator fills in CONTROL_PLANE_*/ECLASS_* once instead of exporting them on
+// every run. Already-exported shell variables still take precedence. The file
+// is gitignored (.env.*); copy .env.chatgptui.example to get started.
+const ENV_FILE = process.env.ECLASS_CHATGPTUI_ENV_FILE
+  ? path.resolve(process.env.ECLASS_CHATGPTUI_ENV_FILE)
+  : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env.chatgptui');
+if (existsSync(ENV_FILE)) {
+  process.loadEnvFile(ENV_FILE);
+  process.stderr.write(`[chatgptui] loaded ${ENV_FILE}\n`);
+}
 
 const PID_FILE = '.chatgptui.pid';
 
