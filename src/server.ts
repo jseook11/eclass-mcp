@@ -3,6 +3,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+import * as fs from 'node:fs';
 import { z } from 'zod';
 
 import { BrowserSession } from './browser-session.js';
@@ -18,6 +19,7 @@ import { getDownloadStatus } from './tools/get-download-status.js';
 import { getAssignmentDetail } from './tools/get-assignment-detail.js';
 import { getGrades } from './tools/get-grades.js';
 import { searchDownloads } from './tools/search-downloads.js';
+import { handoffFile, resolveHandoffMaxBytes } from './tools/file-handoff.js';
 import { exportCourseSnapshot } from './tools/export-snapshot.js';
 import { submitAssignment } from './tools/submit-assignment.js';
 import { downloadOne } from './tools/download.js';
@@ -510,6 +512,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
         },
       },
+      {
+        name: 'eclass_file_handoff',
+        description: '[로컬] 다운로드된 파일의 바이트를 ChatGPT로 전달합니다(원격 transport 전용 용도). file_id는 eclass_search_downloads/eclass_list_downloads에서 얻습니다. 25MB 초과 파일은 거절됩니다(ECLASS_HANDOFF_MAX_BYTES로 조정).',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            file_id: { type: 'string', description: '전달할 파일의 file_id (eclass_search_downloads 결과). 영상은 "video:<id>" 형식.' },
+          },
+          required: ['file_id'],
+        },
+      },
     ]),
   };
 });
@@ -819,6 +832,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         } else {
           return { isError: true, content: [{ type: 'text', text: 'file_id 또는 course_id 중 하나를 지정해주세요' }] };
         }
+      }
+
+      case 'eclass_file_handoff': {
+        const parsed = z.object({ file_id: z.string().min(1) }).parse(args ?? {});
+        const outcome = handoffFile(parsed.file_id, {
+          getRecord: (id) => fileCache.get(id),
+          statSize: (p) => {
+            try {
+              return fs.statSync(p).size;
+            } catch {
+              return null;
+            }
+          },
+          readFile: (p) => fs.readFileSync(p),
+          maxBytes: resolveHandoffMaxBytes(process.env),
+        });
+        if (!outcome.ok) {
+          return { isError: true, content: [{ type: 'text', text: JSON.stringify(outcome.error) }] };
+        }
+        return outcome.result as unknown as Parameters<typeof normalizeToolResult>[0];
       }
 
       case 'search': {

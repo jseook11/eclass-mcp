@@ -18,6 +18,7 @@ const readOnlyTools = new Set([
   'eclass_get_materials',
   'eclass_list_downloads',
   'eclass_get_download_status',
+  'eclass_file_handoff',
   'search',
   'fetch',
 ]);
