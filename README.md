@@ -135,6 +135,8 @@ pnpm run setup
 
 `pnpm run setup`은 대화형으로 ID/비밀번호를 받아 **비밀번호는 OS 자격증명 저장소에 저장**하고
 (설정 파일에 평문으로 남기지 않음), MCP 클라이언트 설정에 서버 항목을 써 줍니다.
+기본 경로는 로컬 데스크톱용 stdio MCP입니다. ChatGPT remote MCP / Secure Tunnel은
+아래의 선택 기능을 실행할 때만 별도로 켭니다.
 
 - 설정 대상은 자동 감지하거나 `--target`으로 지정합니다.
   - `--target mcp-json` → 프로젝트의 `.mcp.json` (Claude Code 등)
@@ -197,10 +199,12 @@ node dist/index.js
 여부·비밀번호 조회 결과를 한 줄로 보고합니다. 비밀번호 조회 실패 시 오류 메시지에도
 어떤 백엔드가 쓰였고 다음에 무엇을 실행해야 하는지가 포함됩니다.
 
-## ChatGPT 연결
+## ChatGPT 연결 (선택)
 
 ChatGPT UI나 Responses API의 remote MCP 서버로 붙일 때는 HTTP transport를 사용합니다.
-OpenAI Secure MCP Tunnel을 쓰는 자동 기동은 `npm run chatgptui`로 실행합니다
+일반 로컬 데스크톱 사용에는 tunnel API key가 필요하지 않습니다. OpenAI Secure MCP
+Tunnel을 쓸 때만 Platform Tunnels에서 API key/tunnel id를 발급하고
+`npm run chatgptui`로 명시적으로 켭니다
 (자세히는 [`docs/CHATGPT_TUNNEL_SETUP.md`](docs/CHATGPT_TUNNEL_SETUP.md)).
 v1은 **개인용 단일 사용자 서버**입니다. 서버가 실행되는 머신의 `ECLASS_USERNAME`과
 자격증명 저장소(OS 저장소 또는 암호화 파일)에 저장된 LMS 비밀번호를 사용하며, ChatGPT
@@ -209,8 +213,9 @@ v1은 **개인용 단일 사용자 서버**입니다. 서버가 실행되는 머
 함께 주입하세요.
 
 ```bash
-# 1) stdio 설정과 동일하게 credential store를 먼저 준비
-#    (헤드리스 서버는 `pnpm run setup -- --target encrypted`)
+# 1) 로컬 stdio 설정과 동일하게 credential store를 먼저 준비
+#    데스크톱은 기본 setup이면 충분합니다.
+#    헤드리스 서버는 `pnpm run setup -- --target encrypted`
 pnpm run setup
 
 # 2) 빌드
@@ -246,6 +251,9 @@ HTTP 서버는 다음을 지원합니다.
 `pnpm run start:http`가 `node dist/index.js --http --port 8787`을 실행합니다.
 공개 URL로 노출할 때는 반드시 `ECLASS_REMOTE_AUTH_TOKEN`이나 tunnel 접근 제어를 두세요.
 도구/metadata 변경 후에는 ChatGPT connector 설정에서 refresh해야 새 descriptor가 반영됩니다.
+Tunnel 자동 기동은 `pnpm run chatgptui` 또는 `pnpm run chatgptui:start`로 시작하고,
+`pnpm run chatgptui:status`로 pidfile 기반 상태를 확인하며,
+`pnpm run chatgptui:stop`으로 중지합니다.
 
 파일 조회/다운로드 도구는 파일을 ChatGPT에 첨부하지 않습니다. 자료는 먼저 MCP 서버 로컬 캐시에 저장되고, ChatGPT가 파일 내용을 직접 읽어야 할 때만 `eclass_file_handoff`가 공개 `/files/<token>` URL을 별도로 발급합니다. 반환 URL이 `https://.../files/<token>`처럼 외부에서 접근 가능하면 ChatGPT 브라우징으로 그 URL을 직접 열어야 합니다.
 

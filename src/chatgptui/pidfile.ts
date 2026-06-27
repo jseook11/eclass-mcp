@@ -8,6 +8,18 @@ export type PidRecord = {
 };
 
 export type Killer = (pid: number, signal: NodeJS.Signals | number) => void;
+export type PidProcessStatus = {
+  name: 'http' | 'tunnel' | 'orchestrator';
+  pid: number;
+  running: boolean;
+};
+export type PidStatus = {
+  exists: boolean;
+  running: boolean;
+  port?: number;
+  processes: PidProcessStatus[];
+};
+export type LivenessCheck = (pid: number) => boolean;
 
 export async function writePidFile(filePath: string, record: PidRecord): Promise<void> {
   await fs.writeFile(filePath, JSON.stringify(record), { mode: 0o600 });
@@ -20,6 +32,43 @@ export async function readPidFile(filePath: string): Promise<PidRecord | null> {
   } catch {
     return null;
   }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'EPERM';
+  }
+}
+
+export async function statusFromPidFile(
+  filePath: string,
+  isAlive: LivenessCheck = isProcessAlive,
+): Promise<PidStatus> {
+  const record = await readPidFile(filePath);
+  if (!record) return { exists: false, running: false, processes: [] };
+
+  const processes: PidProcessStatus[] = [
+    { name: 'http', pid: record.http, running: isAlive(record.http) },
+    { name: 'tunnel', pid: record.tunnel, running: isAlive(record.tunnel) },
+  ];
+  if (record.orchestrator) {
+    processes.push({
+      name: 'orchestrator',
+      pid: record.orchestrator,
+      running: isAlive(record.orchestrator),
+    });
+  }
+
+  return {
+    exists: true,
+    running: processes.some((processStatus) => processStatus.running),
+    port: record.port,
+    processes,
+  };
 }
 
 export async function stopFromPidFile(

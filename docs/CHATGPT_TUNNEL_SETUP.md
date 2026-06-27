@@ -8,8 +8,9 @@ eclass-mcp를 OpenAI Secure MCP Tunnel로 ChatGPT connector에 연결한다.
 - `tunnel-client` 설치 확인: `tunnel-client --version` (검증: v0.0.9).
   설치는 Platform Tunnels 화면의 바이너리 다운로드 안내를 따른다.
 - eclass-mcp 빌드: `npm run build`.
-- 암호화 자격증명 백엔드 설정 완료:
-  `npm run setup -- --target encrypted` (자세히는 README "헤드리스 서버: 암호화 백엔드").
+- 자격증명 설정 완료: 데스크톱에서는 기본 `npm run setup`으로 OS credential store를
+  사용한다. 헤드리스 서버에서는 `npm run setup -- --target encrypted`로 암호화
+  백엔드를 준비하는 것을 권장한다.
 
 ## 1. Tunnel 발급
 
@@ -36,9 +37,13 @@ npm run chatgptui
 ```bash
 export CONTROL_PLANE_API_KEY="sk-..."
 export CONTROL_PLANE_TUNNEL_ID="tunnel_0123..."
-export ECLASS_USERNAME="your_id"
-export ECLASS_CREDENTIAL_BACKEND=encrypted
-export ECLASS_SECRET_KEY="<base64 32바이트 마스터 키>"
+
+# 선택: ECLASS_USERNAME이 없으면 setup이 저장한 Hermes/.mcp.json 설정에서 자동 해석
+# export ECLASS_USERNAME="your_id"
+
+# 선택(헤드리스/server): encrypted backend를 명시한 경우 master key도 주입
+# export ECLASS_CREDENTIAL_BACKEND=encrypted
+# export ECLASS_SECRET_KEY="<base64 32바이트 마스터 키>"
 ```
 
 `CONTROL_PLANE_API_KEY` 대신 `OPENAI_API_KEY`를 둘 수도 있다. 오케스트레이터가
@@ -74,6 +79,7 @@ mcp:
 
 ```bash
 npm run chatgptui
+npm run chatgptui:status
 npm run chatgptui:stop
 ```
 
@@ -104,5 +110,7 @@ npm run chatgptui:stop
 - `oauth_metadata FAIL`: non-OAuth single-user 모드의 정상 케이스다. `chatgptui`는 이를 허용하고 진행한다.
 - `tunnel-client doctor` 실행 불가: 자동 fallback하지 않고 중단한다. `tunnel-client` 설치와 `PATH`를 확인한다.
 - `Password not found in credential store`: tunnel 문제가 아니라 자격증명 백엔드 문제다.
-  `ECLASS_CREDENTIAL_BACKEND=encrypted`와 `ECLASS_SECRET_KEY` 또는 `ECLASS_SECRET_KEY_FILE` 주입을 확인한다.
+  데스크톱에서는 `npm run setup`을 다시 실행해 OS credential store 저장 여부를 확인한다.
+  헤드리스 서버에서는 `ECLASS_CREDENTIAL_BACKEND=encrypted`와 `ECLASS_SECRET_KEY` 또는
+  `ECLASS_SECRET_KEY_FILE` 주입을 확인한다.
 - 401 from MCP: 프로파일의 `X-Eclass-Auth` 헤더와 두 child process의 `ECLASS_REMOTE_AUTH_TOKEN` 주입을 확인한다.

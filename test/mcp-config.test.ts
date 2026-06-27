@@ -135,6 +135,10 @@ test('.mcp.json generators use node, never pnpm start (stdout banner corrupts st
   const def = createDefaultMcpJsonConfig('/root/eclass-mcp');
   assert.equal(def.mcpServers?.eclass.command, 'node');
   assert.deepEqual(def.mcpServers?.eclass.args, ['/root/eclass-mcp/dist/index.js']);
+  assert.equal(def.mcpServers?.eclass.env?.ECLASS_TRANSPORT, undefined);
+  assert.equal(def.mcpServers?.eclass.env?.CONTROL_PLANE_API_KEY, undefined);
+  assert.equal(def.mcpServers?.eclass.env?.CONTROL_PLANE_TUNNEL_ID, undefined);
+  assert.equal(def.mcpServers?.eclass.env?.ECLASS_CREDENTIAL_BACKEND, undefined);
 
   // Repairs a pre-existing broken pnpm-based entry on re-run
   const broken: any = { mcpServers: { eclass: { command: 'pnpm', args: ['--dir', '/root/eclass-mcp', 'start'], env: { KEEP: '1' } } } };

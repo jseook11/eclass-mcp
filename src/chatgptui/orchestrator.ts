@@ -8,6 +8,7 @@ export type ChildLike = {
 
 export type RunDeps = {
   env: Record<string, string | undefined>;
+  resolveUsername?: () => Promise<string | undefined>;
   spawn: (cmd: string, args: string[], opts?: { env?: Record<string, string> }) => ChildLike;
   waitHttpReady: (port: number, token: string) => Promise<boolean>;
   ensureProfile: (
@@ -48,7 +49,12 @@ function errorMessage(err: unknown): string {
 }
 
 export async function runChatgptui(deps: RunDeps): Promise<RunResult> {
-  const validated = validateChatgptuiEnv(deps.env);
+  const runtimeEnv = { ...deps.env };
+  if (!runtimeEnv.ECLASS_USERNAME && deps.resolveUsername) {
+    runtimeEnv.ECLASS_USERNAME = await deps.resolveUsername();
+  }
+
+  const validated = validateChatgptuiEnv(runtimeEnv);
   if (!validated.ok) {
     deps.log('환경 설정 오류:');
     for (const error of validated.errors) deps.log(`  - ${error}`);
@@ -56,7 +62,7 @@ export async function runChatgptui(deps: RunDeps): Promise<RunResult> {
   }
 
   const childEnv: Record<string, string> = {};
-  for (const [key, value] of Object.entries(deps.env)) {
+  for (const [key, value] of Object.entries(runtimeEnv)) {
     if (value !== undefined) childEnv[key] = value;
   }
   childEnv.ECLASS_REMOTE_AUTH_TOKEN = validated.token;

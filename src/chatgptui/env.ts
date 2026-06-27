@@ -22,11 +22,8 @@ function profileDir(env: Record<string, string | undefined>): string {
 export function validateChatgptuiEnv(env: Record<string, string | undefined>): ChatgptuiEnv {
   const errors: string[] = [];
 
-  if (env.ECLASS_CREDENTIAL_BACKEND !== 'encrypted') {
-    errors.push('암호화 백엔드 미설정 — ECLASS_CREDENTIAL_BACKEND=encrypted 필요 (헤드리스 서버에서 평문 저장 회피)');
-  }
   const hasMasterKey = Boolean(env.ECLASS_SECRET_KEY || env.ECLASS_SECRET_KEY_FILE);
-  if (!hasMasterKey) {
+  if (env.ECLASS_CREDENTIAL_BACKEND === 'encrypted' && !hasMasterKey) {
     errors.push('마스터 키 미주입 — ECLASS_SECRET_KEY 또는 ECLASS_SECRET_KEY_FILE 필요');
   }
   const controlPlaneKey = env.CONTROL_PLANE_API_KEY || env.OPENAI_API_KEY;
@@ -38,7 +35,7 @@ export function validateChatgptuiEnv(env: Record<string, string | undefined>): C
     errors.push('tunnel id 미설정 — CONTROL_PLANE_TUNNEL_ID 필요 (Platform Tunnels에서 발급)');
   }
   if (!env.ECLASS_USERNAME) {
-    errors.push('eclass 사용자 미설정 — ECLASS_USERNAME 필요');
+    errors.push('eclass 사용자 미설정 — ECLASS_USERNAME 필요. 먼저 `pnpm run setup`을 실행하세요.');
   }
 
   const rawPort = Number(env.ECLASS_HTTP_PORT ?? env.PORT ?? '8787');

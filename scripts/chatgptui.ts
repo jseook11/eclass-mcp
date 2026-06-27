@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 import { classifyDoctorResult, type DoctorClassification } from '../src/chatgptui/doctor.js';
 import { runChatgptui, type ChildLike } from '../src/chatgptui/orchestrator.js';
-import { stopFromPidFile, writePidFile } from '../src/chatgptui/pidfile.js';
+import { statusFromPidFile, stopFromPidFile, writePidFile } from '../src/chatgptui/pidfile.js';
 import { ensureTunnelProfile } from '../src/chatgptui/profile.js';
+import { resolveDoctorCredentials } from '../src/doctor.js';
 
 // Convenience: load runtime env from a local .env.chatgptui if present, so the
 // operator fills in CONTROL_PLANE_*/ECLASS_* once instead of exporting them on
@@ -84,14 +85,33 @@ async function waitTunnelReady(healthUrlFile: string): Promise<boolean> {
 async function main(): Promise<void> {
   const cmd = process.argv[2];
 
+  if (cmd && cmd !== 'start' && cmd !== 'stop' && cmd !== 'status') {
+    process.stderr.write('사용법: npm run chatgptui [start|stop|status]\n');
+    process.exit(2);
+  }
+
   if (cmd === 'stop') {
     const result = await stopFromPidFile(PID_FILE);
     process.stdout.write(result.stopped ? 'chatgptui 종료됨\n' : '실행 중인 chatgptui 없음\n');
     return;
   }
 
+  if (cmd === 'status') {
+    const status = await statusFromPidFile(PID_FILE);
+    if (!status.exists) {
+      process.stdout.write('chatgptui stopped (pidfile 없음)\n');
+      return;
+    }
+    process.stdout.write(`chatgptui ${status.running ? 'running' : 'stopped'} (port ${status.port})\n`);
+    for (const processStatus of status.processes) {
+      process.stdout.write(`- ${processStatus.name}: pid ${processStatus.pid} ${processStatus.running ? 'running' : 'stale'}\n`);
+    }
+    return;
+  }
+
   const result = await runChatgptui({
     env: process.env,
+    resolveUsername: async () => (await resolveDoctorCredentials()).username,
     spawn: spawnChild,
     waitHttpReady,
     ensureProfile: ensureTunnelProfile,

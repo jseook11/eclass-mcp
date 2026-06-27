@@ -24,6 +24,17 @@ test('validateChatgptuiEnv passes with all required env and defaults', () => {
   assert.equal(r.profilePath, path.join(os.homedir(), '.config', 'tunnel-client', 'eclass-mcp.yaml'));
 });
 
+test('validateChatgptuiEnv passes for desktop local credential store without encrypted backend', () => {
+  const env = {
+    CONTROL_PLANE_API_KEY: 'sk-test',
+    CONTROL_PLANE_TUNNEL_ID: 'tunnel_abc',
+    ECLASS_USERNAME: 'student1',
+  };
+  const r = validateChatgptuiEnv(env);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.errors, []);
+});
+
 test('validateChatgptuiEnv honors XDG_CONFIG_HOME for profile path', () => {
   const env = { ...baseEnv(), XDG_CONFIG_HOME: '/tmp/xdg' };
   const r = validateChatgptuiEnv(env);
@@ -43,15 +54,15 @@ test('validateChatgptuiEnv treats an empty ECLASS_REMOTE_AUTH_TOKEN as absent', 
   assert.notEqual(r.token, '');
 });
 
-test('validateChatgptuiEnv requires encrypted credential backend', () => {
+test('validateChatgptuiEnv does not require encrypted credential backend by default', () => {
   const env = { ...baseEnv() };
   delete env.ECLASS_CREDENTIAL_BACKEND;
   const r = validateChatgptuiEnv(env);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('ECLASS_CREDENTIAL_BACKEND')));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.errors, []);
 });
 
-test('validateChatgptuiEnv requires a master key with encrypted backend', () => {
+test('validateChatgptuiEnv requires a master key only when encrypted backend is explicit', () => {
   const env = { ...baseEnv() };
   delete env.ECLASS_SECRET_KEY;
   const r = validateChatgptuiEnv(env);

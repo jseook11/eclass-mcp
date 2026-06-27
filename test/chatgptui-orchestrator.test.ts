@@ -92,6 +92,25 @@ test('runChatgptui maps OPENAI_API_KEY fallback to CONTROL_PLANE_API_KEY for tun
   assert.equal(envsSeen[1].CONTROL_PLANE_API_KEY, 'sk-fallback');
 });
 
+test('runChatgptui resolves ECLASS_USERNAME from local config when env is missing', async () => {
+  const envsSeen: Array<Record<string, string>> = [];
+  const { deps } = makeDeps({
+    env: {
+      CONTROL_PLANE_API_KEY: 'sk-test',
+      CONTROL_PLANE_TUNNEL_ID: 'tunnel_abc',
+    },
+    resolveUsername: async () => 'student-from-config',
+    spawn: (_cmd: string, _args: string[], opts?: any) => {
+      envsSeen.push(opts?.env ?? {});
+      return { pid: envsSeen.length === 1 ? 1001 : 2002, killed: false, kill() {} };
+    },
+  });
+  const result = await runChatgptui(deps as any);
+  assert.equal(result.ok, true);
+  assert.equal(envsSeen[0].ECLASS_USERNAME, 'student-from-config');
+  assert.equal(envsSeen[1].ECLASS_USERNAME, 'student-from-config');
+});
+
 test('runChatgptui aborts (and kills http) when env invalid', async () => {
   const { deps, spawned } = makeDeps({ env: { ECLASS_USERNAME: 'x' } });
   const result = await runChatgptui(deps as any);
