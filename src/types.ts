@@ -53,8 +53,27 @@ export interface LTIItem {
   url: string;
 }
 
-// Cached token structure
-export interface CachedToken {
+// Legacy token cache. V1 did not retain the Canvas token id, so it must be
+// rotated before use to make deterministic server-side revocation possible.
+export interface CachedTokenV1 {
   token: string;
   expires_at: string;          // ISO 8601
 }
+
+export interface CachedTokenRevocation {
+  id?: string;
+  token_hint?: string;
+}
+
+// V2 retains all metadata needed to rotate and revoke Canvas API tokens.
+export interface CachedTokenV2 {
+  version: 2;
+  token: string;
+  id: string;
+  token_hint: string;
+  issued_at: string;           // ISO 8601
+  expires_at: string;          // Actual server-returned ISO 8601 value
+  pending_revocations: CachedTokenRevocation[];
+}
+
+export type CachedToken = CachedTokenV1 | CachedTokenV2;

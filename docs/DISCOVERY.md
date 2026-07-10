@@ -14,7 +14,7 @@ eclass의 비표준 엔드포인트를 파악할 때 쓰는 개발용 도구. MC
 
 ## 자격증명 설정 (개발용)
 
-`npm run setup`을 마쳤다면 추가 설정 없이 터미널에서 바로 실행된다.
+`pnpm run setup`을 마쳤다면 추가 설정 없이 터미널에서 바로 실행된다.
 `discover.ts`는 doctor와 같은 순서로 자격증명을 찾는다:
 셸 env → `~/.hermes/config.yaml` → `.mcp.json` (username), 비밀번호는 자격증명
 저장소(OS 키체인 또는 암호화 파일). 헤드리스 서버는 `ECLASS_CREDENTIAL_BACKEND=encrypted`와
@@ -33,7 +33,7 @@ eclass의 비표준 엔드포인트를 파악할 때 쓰는 개발용 도구. MC
 
 ## CLI 사용법
 
-전제: `.env` 설정 또는 `npm run setup` 완료. `pnpm run discover <cmd>` 로 실행.
+전제: `.env` 설정 또는 `pnpm run setup` 완료. `pnpm run discover <cmd>` 로 실행.
 
 ```bash
 # 1. Canvas API 직접 호출 — 표준 API 지원 여부 확인 (가장 먼저 시도)

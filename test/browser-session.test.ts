@@ -1,7 +1,110 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import type { Page } from 'playwright';
 
-import { buildOcsCaptureFailureMessage } from '../src/browser-session.js';
+import {
+  buildCanvasTokenCompensationRetentionError,
+  buildCanvasTokenRecoveryManualCleanupError,
+  buildOcsCaptureFailureMessage,
+  listCanvasTokensFromAuthenticatedPage,
+  parseCachedSessionCredential,
+  redactBrowserDiagnostic,
+  revokeCanvasTokenFromAuthenticatedPage,
+} from '../src/browser-session.js';
+import { CANVAS_JSON_ACCEPT } from '../src/canvas-token-lifecycle.js';
+
+test('browser token recovery list/revoke calls are bounded and same-origin', async () => {
+  const baseUrl = 'https://eclass3.cau.ac.kr';
+  const runtime = globalThis as unknown as Record<string, unknown>;
+  const previousWindow = runtime.window;
+  const previousDocument = runtime.document;
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ input: string; init: RequestInit | undefined }> = [];
+  runtime.window = { location: { origin: baseUrl } };
+  runtime.document = { querySelector: () => null };
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ input: String(input), init });
+    const isDelete = init?.method === 'DELETE';
+    return {
+      ok: true,
+      status: isDelete ? 204 : 200,
+      url: `${baseUrl}${String(input)}`,
+      text: async () => isDelete ? '' : JSON.stringify([{ id: 'listed-id' }]),
+    } as Response;
+  }) as typeof fetch;
+  const page = {
+    url: () => `${baseUrl}/profile/settings`,
+    evaluate: async (fn: (arg: unknown) => unknown, arg: unknown) => fn(arg),
+  } as unknown as Page;
+
+  try {
+    assert.deepEqual(await listCanvasTokensFromAuthenticatedPage(page), [{ id: 'listed-id' }]);
+    assert.equal(
+      await revokeCanvasTokenFromAuthenticatedPage(page, { id: 'old/id' }),
+      true,
+    );
+
+    assert.equal(calls[0].input, '/api/v1/users/self/user_generated_tokens?per_page=100');
+    assert.equal(calls[0].init?.method, 'GET');
+    assert.equal(calls[0].init?.redirect, 'error');
+    assert.equal(calls[0].init?.credentials, 'same-origin');
+    assert.equal(new Headers(calls[0].init?.headers).get('Accept'), CANVAS_JSON_ACCEPT);
+    assert.ok(calls[0].init?.signal instanceof AbortSignal);
+    assert.equal(calls[1].input, '/api/v1/users/self/tokens/old%2Fid');
+    assert.equal(calls[1].init?.method, 'DELETE');
+    assert.equal(calls[1].init?.redirect, 'error');
+    assert.equal(calls[1].init?.credentials, 'same-origin');
+    assert.equal(new Headers(calls[1].init?.headers).get('Accept'), CANVAS_JSON_ACCEPT);
+    assert.ok(calls[1].init?.signal instanceof AbortSignal);
+
+    const crossOriginPage = {
+      url: () => 'https://attacker.example/profile/settings',
+    } as unknown as Page;
+    await assert.rejects(
+      () => listCanvasTokensFromAuthenticatedPage(crossOriginPage),
+      /authenticated same-origin page/,
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousWindow === undefined) delete runtime.window;
+    else runtime.window = previousWindow;
+    if (previousDocument === undefined) delete runtime.document;
+    else runtime.document = previousDocument;
+  }
+});
+
+test('failed compensation retention reports actionable manual cleanup without secrets', () => {
+  const error = buildCanvasTokenCompensationRetentionError(
+    new Error('operation included super-secret-token'),
+    new Error('backend included another-secret'),
+  );
+  assert.match(error.message, /token may still be live/i);
+  assert.match(error.message, /manually revoke.*Canvas profile settings/i);
+  assert.doesNotMatch(error.message, /super-secret-token|another-secret/);
+  assert.ok(error.cause instanceof AggregateError);
+});
+
+test('ambiguous token creation recovery requires exact manual Canvas review safely', () => {
+  const error = buildCanvasTokenRecoveryManualCleanupError(
+    new Error('transport mentioned super-secret-token'),
+    new Error('selection mentioned private-purpose'),
+  );
+  assert.match(error.message, /exact issued token could not be identified and revoked safely/i);
+  assert.match(error.message, /manually review Canvas profile settings/i);
+  assert.doesNotMatch(error.message, /super-secret-token|private-purpose/);
+  assert.ok(error.cause instanceof AggregateError);
+});
+
+test('session credential parsing distinguishes missing and corrupt cache values', () => {
+  assert.equal(parseCachedSessionCredential(null), null);
+  assert.equal(parseCachedSessionCredential('not-json'), null);
+  assert.equal(parseCachedSessionCredential('[]'), null);
+  assert.equal(parseCachedSessionCredential('{}'), null);
+  assert.deepEqual(
+    parseCachedSessionCredential('{"cookies":[],"origins":[]}'),
+    { cookies: [], origins: [] },
+  );
+});
 
 test('buildOcsCaptureFailureMessage includes OCS diagnostics', () => {
   const message = buildOcsCaptureFailureMessage({
@@ -24,4 +127,30 @@ test('buildOcsCaptureFailureMessage includes OCS diagnostics', () => {
   assert.match(message, /media candidates: \[response:media:application\/vnd\.apple\.mpegurl\] https:\/\/ocs\.cau\.ac\.kr\/media\/video\.m3u8/);
   assert.match(message, /video sources: blob:https:\/\/ocs\.cau\.ac\.kr\/abc/);
   assert.match(message, /iframe sources: https:\/\/ocs\.cau\.ac\.kr\/player\/frame/);
+});
+
+test('browser diagnostics redact signed and session-bearing URL queries', () => {
+  const diagnostic = redactBrowserDiagnostic(
+    '302 https://eclass3.cau.ac.kr/login?access_token=token-value&sig=signed-value&page=2 ' +
+    '/relative?session=relative-session-value',
+  );
+  assert.doesNotMatch(diagnostic, /token-value|signed-value|relative-session-value/);
+  assert.match(diagnostic, /page=2/);
+
+  const message = buildOcsCaptureFailureMessage({
+    resourceId: '1',
+    displayName: 'file.pdf',
+    finalPageUrl: 'https://ocs.cau.ac.kr/view?session=session-value',
+    pageTitle: 'Viewer',
+    recentFrames: ['https://ocs.cau.ac.kr/frame?verifier=verify-value'],
+    recentRequests: ['GET https://ocs.cau.ac.kr/file?access_token=request-value'],
+    recentResponses: ['302 https://ocs.cau.ac.kr/next?sig=response-value'],
+    mediaCandidates: [],
+    videoSources: [],
+    iframeSources: ['/player?token=relative-frame-token'],
+  });
+  assert.doesNotMatch(
+    message,
+    /session-value|verify-value|request-value|response-value|relative-frame-token/,
+  );
 });

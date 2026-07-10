@@ -3,7 +3,6 @@ node_modules/
 dist/
 .pnpm-store/
 package-lock.json
-pnpm-lock.yaml
 
 # Local secrets and personal configuration
 .env

@@ -14,6 +14,7 @@ test('redactHeaders hides credential header values but keeps names', () => {
     Authorization: 'Bearer secret-token-123',
     Cookie: 'canvas_session=abc',
     'X-CSRF-Token': 'csrf-value',
+    Location: 'https://eclass3.cau.ac.kr/oauth/callback?code=location-code#token=fragment-token',
     'Content-Type': 'application/json',
     Accept: 'application/json',
   });
@@ -21,6 +22,7 @@ test('redactHeaders hides credential header values but keeps names', () => {
   assert.equal(result['authorization'], REDACTED);
   assert.equal(result['cookie'], REDACTED);
   assert.equal(result['x-csrf-token'], REDACTED);
+  assert.doesNotMatch(result.location, /location-code|fragment-token/);
   assert.equal(result['content-type'], 'application/json');
   assert.equal(result['accept'], 'application/json');
 
@@ -43,6 +45,13 @@ test('redactUrl masks sensitive query params and keeps the rest', () => {
 
 test('redactUrl never echoes an unparseable URL', () => {
   assert.equal(redactUrl('not a url with token=abc'), UNPARSEABLE_URL);
+  assert.equal(redactUrl('data:text/plain,secret-content'), UNPARSEABLE_URL);
+});
+
+test('redactUrl hides URL userinfo and fragments', () => {
+  const result = redactUrl('https://user:password@example.com/callback#access_token=fragment-secret');
+  assert.doesNotMatch(result, /user|password|fragment-secret/);
+  assert.match(result, /REDACTED/);
 });
 
 test('summarizeBody returns form field names without values', () => {

@@ -11,17 +11,18 @@ const SAFE_HEADERS = new Set([
   'content-disposition',
   'content-length',
   'content-type',
-  'location',
   'x-canvas-meta',
 ]);
 
-const SENSITIVE_QUERY_PARAM = /(token|secret|password|passwd|session|cookie|auth|signature|\bsig\b|verifier|ticket|sso|jwt|key)/i;
+const SENSITIVE_QUERY_PARAM = /(token|secret|password|passwd|session|cookie|auth|signature|\bsig\b|verifier|ticket|sso|saml|assertion|relay|oauth|\bcode\b|\bstate\b|jwt|key)/i;
 
 export function redactHeaders(headers: Record<string, string>): Record<string, string> {
   const result: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
-    result[lower] = SAFE_HEADERS.has(lower) ? value : REDACTED;
+    result[lower] = lower === 'location'
+      ? redactUrl(value)
+      : SAFE_HEADERS.has(lower) ? value : REDACTED;
   }
   return result;
 }
@@ -34,11 +35,18 @@ export function redactUrl(rawUrl: string): string {
     // An unparseable URL may still embed credentials — never echo it back
     return UNPARSEABLE_URL;
   }
+  if (!['http:', 'https:', 'blob:'].includes(url.protocol)) {
+    return UNPARSEABLE_URL;
+  }
+  if (url.username) url.username = REDACTED;
+  if (url.password) url.password = REDACTED;
   for (const name of Array.from(url.searchParams.keys())) {
     if (SENSITIVE_QUERY_PARAM.test(name)) {
       url.searchParams.set(name, REDACTED);
     }
   }
+  // OAuth/SAML fragments can carry bearer material even when no query exists.
+  if (url.hash) url.hash = REDACTED;
   return url.toString();
 }
 

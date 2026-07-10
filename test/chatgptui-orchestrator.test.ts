@@ -12,8 +12,10 @@ function makeDeps(overrides: Partial<any> = {}) {
 
   const deps = {
     env: {
+      PATH: '/usr/bin:/bin',
+      HOME: '/home/test',
       ECLASS_CREDENTIAL_BACKEND: 'encrypted',
-      ECLASS_SECRET_KEY: 'a'.repeat(44),
+      ECLASS_SECRET_KEY: Buffer.alloc(32, 1).toString('base64'),
       CONTROL_PLANE_API_KEY: 'sk-test',
       CONTROL_PLANE_TUNNEL_ID: 'tunnel_abc',
       ECLASS_USERNAME: 'student1',
@@ -52,44 +54,108 @@ test('runChatgptui writes optional orchestrator pid for stop coordination', asyn
   assert.deepEqual(writes[0].record, { http: 1001, tunnel: 2002, port: 8787, orchestrator: 3003 });
 });
 
-test('runChatgptui injects the same auth token into both child envs but never logs it', async () => {
+test('runChatgptui splits least-privilege HTTP and tunnel environments', async () => {
   const logs: string[] = [];
-  const envsSeen: Array<Record<string, string>> = [];
+  const envsSeen: Array<{ cmd: string; env: Record<string, string> }> = [];
+  let doctorEnv: Record<string, string> | undefined;
   const { deps } = makeDeps({
+    env: {
+      PATH: '/custom/bin',
+      HOME: '/home/test',
+      ECLASS_CREDENTIAL_BACKEND: 'encrypted',
+      ECLASS_SECRET_KEY: Buffer.alloc(32, 2).toString('base64'),
+      ECLASS_DB_PATH: '/home/test/files.db',
+      ECLASS_PASSWORD: 'must-not-propagate',
+      ALLOW_PLAINTEXT_ENV_SECRETS: ' true ',
+      CONTROL_PLANE_API_KEY: 'sk-control',
+      CONTROL_PLANE_TUNNEL_ID: 'tunnel_abc',
+      ECLASS_USERNAME: 'student1',
+      OPENAI_API_KEY: 'must-not-propagate',
+      UNRELATED_SECRET: 'must-not-propagate',
+    },
     spawn: (cmd: string, _args: string[], opts?: any) => {
-      envsSeen.push(opts?.env ?? {});
+      envsSeen.push({ cmd, env: opts?.env ?? {} });
       return { pid: cmd.includes('tunnel-client') ? 2002 : 1001, killed: false, kill() {} };
+    },
+    runDoctor: async (_profilePath: string, env: Record<string, string>) => {
+      doctorEnv = env;
+      return { proceed: true, tolerated: [], blocking: [] as string[] };
     },
     log: (m: string) => logs.push(m),
   });
   const result = await runChatgptui(deps as any);
   assert.equal(result.ok, true);
-  const httpToken = envsSeen[0].ECLASS_REMOTE_AUTH_TOKEN;
-  const tunnelToken = envsSeen[1].ECLASS_REMOTE_AUTH_TOKEN;
+  const httpEnv = envsSeen[0].env;
+  const tunnelEnv = envsSeen[1].env;
+  const httpToken = httpEnv.ECLASS_REMOTE_AUTH_TOKEN;
+  const tunnelToken = tunnelEnv.ECLASS_REMOTE_AUTH_TOKEN;
   assert.ok(httpToken && httpToken.length >= 32);
   assert.equal(httpToken, tunnelToken);
+  assert.equal(httpEnv.ECLASS_SECRET_KEY?.length, 44);
+  assert.equal(httpEnv.ECLASS_USERNAME, 'student1');
+  assert.equal(httpEnv.ECLASS_DB_PATH, '/home/test/files.db');
+  assert.equal(httpEnv.CONTROL_PLANE_API_KEY, undefined);
+  assert.equal(httpEnv.OPENAI_API_KEY, undefined);
+  assert.equal(httpEnv.ECLASS_PASSWORD, 'must-not-propagate');
+  assert.equal(httpEnv.ALLOW_PLAINTEXT_ENV_SECRETS, '1');
+  assert.equal(httpEnv.UNRELATED_SECRET, undefined);
+  assert.equal(tunnelEnv.CONTROL_PLANE_API_KEY, 'sk-control');
+  assert.equal(tunnelEnv.CONTROL_PLANE_TUNNEL_ID, 'tunnel_abc');
+  assert.equal(tunnelEnv.ECLASS_SECRET_KEY, undefined);
+  assert.equal(tunnelEnv.ECLASS_USERNAME, undefined);
+  assert.equal(tunnelEnv.ECLASS_DB_PATH, undefined);
+  assert.equal(tunnelEnv.ECLASS_PASSWORD, undefined);
+  assert.equal(tunnelEnv.ALLOW_PLAINTEXT_ENV_SECRETS, undefined);
+  assert.equal(tunnelEnv.OPENAI_API_KEY, undefined);
+  assert.equal(tunnelEnv.UNRELATED_SECRET, undefined);
+  assert.equal(tunnelEnv.PATH, '/custom/bin');
+  assert.deepEqual(doctorEnv, tunnelEnv);
   assert.ok(!logs.join('\n').includes(httpToken));
 });
 
-test('runChatgptui maps OPENAI_API_KEY fallback to CONTROL_PLANE_API_KEY for tunnel profile env refs', async () => {
-  const envsSeen: Array<Record<string, string>> = [];
-  const { deps } = makeDeps({
+test('runChatgptui omits an ambient LMS password unless plaintext override is explicit', async () => {
+  for (const override of [undefined, '0', 'false']) {
+    const envsSeen: Array<Record<string, string>> = [];
+    const { deps } = makeDeps({
+      env: {
+        PATH: '/usr/bin:/bin',
+        HOME: '/home/test',
+        ECLASS_CREDENTIAL_BACKEND: 'encrypted',
+        ECLASS_SECRET_KEY: Buffer.alloc(32, 3).toString('base64'),
+        ECLASS_PASSWORD: 'ambient-password-must-stay-out',
+        ...(override === undefined ? {} : { ALLOW_PLAINTEXT_ENV_SECRETS: override }),
+        CONTROL_PLANE_API_KEY: 'sk-control',
+        CONTROL_PLANE_TUNNEL_ID: 'tunnel_abc',
+        ECLASS_USERNAME: 'student1',
+      },
+      spawn: (_cmd: string, _args: string[], opts?: { env?: Record<string, string> }) => {
+        envsSeen.push(opts?.env ?? {});
+        return { pid: envsSeen.length === 1 ? 1001 : 2002, kill() {} };
+      },
+    });
+
+    const result = await runChatgptui(deps as any);
+    assert.equal(result.ok, true);
+    assert.equal(envsSeen[0].ECLASS_PASSWORD, undefined);
+    assert.equal(envsSeen[0].ALLOW_PLAINTEXT_ENV_SECRETS, undefined);
+    assert.equal(envsSeen[1].ECLASS_PASSWORD, undefined);
+  }
+});
+
+test('runChatgptui rejects OPENAI_API_KEY as a control-plane fallback', async () => {
+  const { deps, spawned } = makeDeps({
     env: {
       ECLASS_CREDENTIAL_BACKEND: 'encrypted',
-      ECLASS_SECRET_KEY: 'a'.repeat(44),
+      ECLASS_SECRET_KEY: Buffer.alloc(32, 1).toString('base64'),
       OPENAI_API_KEY: 'sk-fallback',
       CONTROL_PLANE_TUNNEL_ID: 'tunnel_abc',
       ECLASS_USERNAME: 'student1',
     },
-    spawn: (cmd: string, _args: string[], opts?: any) => {
-      envsSeen.push(opts?.env ?? {});
-      return { pid: cmd.includes('tunnel-client') ? 2002 : 1001, killed: false, kill() {} };
-    },
   });
   const result = await runChatgptui(deps as any);
-  assert.equal(result.ok, true);
-  assert.equal(envsSeen[0].CONTROL_PLANE_API_KEY, 'sk-fallback');
-  assert.equal(envsSeen[1].CONTROL_PLANE_API_KEY, 'sk-fallback');
+  assert.equal(result.ok, false);
+  assert.equal(spawned.length, 0);
+  assert.ok(result.errors?.some((error) => error.includes('CONTROL_PLANE_API_KEY')));
 });
 
 test('runChatgptui resolves ECLASS_USERNAME from local config when env is missing', async () => {
@@ -108,7 +174,7 @@ test('runChatgptui resolves ECLASS_USERNAME from local config when env is missin
   const result = await runChatgptui(deps as any);
   assert.equal(result.ok, true);
   assert.equal(envsSeen[0].ECLASS_USERNAME, 'student-from-config');
-  assert.equal(envsSeen[1].ECLASS_USERNAME, 'student-from-config');
+  assert.equal(envsSeen[1].ECLASS_USERNAME, undefined);
 });
 
 test('runChatgptui aborts (and kills http) when env invalid', async () => {

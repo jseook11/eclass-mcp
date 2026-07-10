@@ -2,7 +2,7 @@
 /**
  * eclass-cau 스킬을 Claude Code가 인식하도록 설치한다.
  * ~/.claude/skills/eclass-cau 를 이 repo의 skills/eclass-cau 로 심볼릭 링크한다.
- * 사용: npm run install:skill
+ * 사용: pnpm run install:skill
  */
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';

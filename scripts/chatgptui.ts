@@ -10,17 +10,30 @@ import { runChatgptui, type ChildLike } from '../src/chatgptui/orchestrator.js';
 import { statusFromPidFile, stopFromPidFile, writePidFile } from '../src/chatgptui/pidfile.js';
 import { ensureTunnelProfile } from '../src/chatgptui/profile.js';
 import { resolveDoctorCredentials } from '../src/doctor.js';
+import { assertPrivateFile, makeManagedFilePrivate } from '../src/private-file.js';
+import { expandTilde } from '../src/utils.js';
 
 // Convenience: load runtime env from a local .env.chatgptui if present, so the
 // operator fills in CONTROL_PLANE_*/ECLASS_* once instead of exporting them on
 // every run. Already-exported shell variables still take precedence. The file
-// is gitignored (.env.*); copy .env.chatgptui.example to get started.
-const ENV_FILE = process.env.ECLASS_CHATGPTUI_ENV_FILE
-  ? path.resolve(process.env.ECLASS_CHATGPTUI_ENV_FILE)
+// is gitignored (.env.*); create it with `install -m 600` before adding secrets.
+const CUSTOM_ENV_FILE = process.env.ECLASS_CHATGPTUI_ENV_FILE?.trim();
+const ENV_FILE = CUSTOM_ENV_FILE
+  ? path.resolve(expandTilde(CUSTOM_ENV_FILE))
   : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env.chatgptui');
-if (existsSync(ENV_FILE)) {
-  process.loadEnvFile(ENV_FILE);
-  process.stderr.write(`[chatgptui] loaded ${ENV_FILE}\n`);
+try {
+  if (CUSTOM_ENV_FILE) {
+    await assertPrivateFile(ENV_FILE, 'Custom chatgptui env file');
+    process.loadEnvFile(ENV_FILE);
+    process.stderr.write(`[chatgptui] loaded custom env file ${ENV_FILE}\n`);
+  } else if (existsSync(ENV_FILE)) {
+    await makeManagedFilePrivate(ENV_FILE, 'Managed .env.chatgptui file');
+    process.loadEnvFile(ENV_FILE);
+    process.stderr.write(`[chatgptui] loaded ${ENV_FILE}\n`);
+  }
+} catch (err) {
+  process.stderr.write(`[chatgptui] refusing env file: ${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(1);
 }
 
 const PID_FILE = '.chatgptui.pid';
@@ -86,7 +99,7 @@ async function main(): Promise<void> {
   const cmd = process.argv[2];
 
   if (cmd && cmd !== 'start' && cmd !== 'stop' && cmd !== 'status') {
-    process.stderr.write('사용법: npm run chatgptui [start|stop|status]\n');
+    process.stderr.write('사용법: pnpm run chatgptui [start|stop|status]\n');
     process.exit(2);
   }
 

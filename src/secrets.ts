@@ -37,7 +37,7 @@ export function getSecretEnvWarning(
   if (!envValue?.trim()) return null;
   if (isPlaintextEnvOverrideEnabled()) {
     return `[eclass-mcp] WARNING: ${envName} 환경 변수가 설정되어 있습니다. ` +
-      `${label}가 Keychain 대신 env에서 로드됩니다. 임시 디버그용이 아니면 제거하세요.\n`;
+      `${label}가 secure credential backend 대신 env에서 로드됩니다. 임시 디버그용이 아니면 제거하세요.\n`;
   }
   return `[eclass-mcp] WARNING: ${envName} 환경 변수가 설정되어 있지만 무시됩니다. ` +
     `plaintext env override가 필요하면 ${PLAINTEXT_ENV_OVERRIDE_FLAG}=1 을 명시하세요.\n`;
@@ -69,7 +69,7 @@ export async function getEclassPassword(
     `Password not found in credential store ` +
     `(backend=${diag.backend}, masterKey=${diag.masterKeyPresent ? 'yes' : 'no'}, ` +
     `keytar=${diag.keytarLoaded ? 'loaded' : 'unavailable'}, user=${username}). ` +
-    `Next: run npm run setup --target ${diag.backend === 'encrypted' ? 'encrypted' : 'mcp-json'} ` +
+    `Next: run pnpm run setup -- --target ${diag.backend === 'keytar' ? 'mcp-json' : 'encrypted'} ` +
     `or inject ECLASS_SECRET_KEY for the encrypted backend.`,
   );
 }

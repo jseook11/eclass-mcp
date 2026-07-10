@@ -3,6 +3,12 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import {
+  assertPrivateFile,
+  assertPrivateFileIfExists,
+  writePrivateTextFileAtomic,
+} from './private-file.js';
+import { withCredentialStoreLock } from './credential-store-lock.js';
 import { expandTilde } from './utils.js';
 
 export const DEFAULT_SECRET_STORE_PATH = '~/.eclass-mcp/secrets.json';
@@ -58,7 +64,9 @@ export async function resolveMasterKey(): Promise<Buffer | null> {
 
   const keyFile = process.env[SECRET_KEY_FILE_ENV]?.trim();
   if (keyFile) {
-    const raw = await fs.readFile(expandTilde(keyFile));
+    const resolved = expandTilde(keyFile);
+    await assertPrivateFile(resolved, SECRET_KEY_FILE_ENV);
+    const raw = await fs.readFile(resolved);
     if (raw.length === 32) return raw; // raw 32-byte key
     return decodeBase64Key(raw.toString('utf8').trim()); // otherwise base64 text
   }
@@ -88,9 +96,63 @@ function encodeKey(value: string): string {
   return Buffer.from(value, 'utf8').toString('base64url');
 }
 
-async function readSecretFile(): Promise<SecretFile> {
+function isErrno(err: unknown, code: string): boolean {
+  return Boolean(err && typeof err === 'object' && 'code' in err && err.code === code);
+}
+
+async function canonicalConfiguredPath(filePath: string): Promise<string> {
+  const absolutePath = path.resolve(filePath);
   try {
-    const raw = await fs.readFile(getSecretStorePath(), 'utf8');
+    return await fs.realpath(absolutePath);
+  } catch (err) {
+    if (!isErrno(err, 'ENOENT')) throw err;
+    try {
+      const canonicalParent = await fs.realpath(path.dirname(absolutePath));
+      const basename = os.platform() === 'win32' || os.platform() === 'darwin'
+        ? path.basename(absolutePath).toLocaleLowerCase('en-US')
+        : path.basename(absolutePath);
+      return path.join(canonicalParent, basename);
+    } catch (parentErr) {
+      if (!isErrno(parentErr, 'ENOENT')) throw parentErr;
+      return os.platform() === 'win32' || os.platform() === 'darwin'
+        ? absolutePath.toLocaleLowerCase('en-US')
+        : absolutePath;
+    }
+  }
+}
+
+async function assertEncryptedAndLegacyStoresDiffer(encryptedPath: string): Promise<void> {
+  const legacyPath = getSecretStorePath();
+  const [canonicalEncrypted, canonicalLegacy] = await Promise.all([
+    canonicalConfiguredPath(encryptedPath),
+    canonicalConfiguredPath(legacyPath),
+  ]);
+  if (canonicalEncrypted === canonicalLegacy) {
+    throw new Error(
+      `${ENC_STORE_PATH_ENV} and ECLASS_SECRET_STORE_PATH must refer to different files`,
+    );
+  }
+
+  try {
+    const [encryptedStat, legacyStat] = await Promise.all([
+      fs.stat(encryptedPath),
+      fs.stat(legacyPath),
+    ]);
+    if (encryptedStat.dev === legacyStat.dev && encryptedStat.ino === legacyStat.ino) {
+      throw new Error(
+        `${ENC_STORE_PATH_ENV} and ECLASS_SECRET_STORE_PATH must not be hard links to the same file`,
+      );
+    }
+  } catch (err) {
+    if (isErrno(err, 'ENOENT')) return;
+    throw err;
+  }
+}
+
+async function readSecretFile(storePath = getSecretStorePath()): Promise<SecretFile> {
+  if (!(await assertPrivateFileIfExists(storePath, 'Plaintext legacy credential file'))) return {};
+  try {
+    const raw = await fs.readFile(storePath, 'utf8');
     const parsed = JSON.parse(raw) as unknown;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
     return parsed as SecretFile;
@@ -100,27 +162,43 @@ async function readSecretFile(): Promise<SecretFile> {
   }
 }
 
-async function writeSecretFile(file: SecretFile): Promise<void> {
-  const storePath = getSecretStorePath();
-  await fs.mkdir(path.dirname(storePath), { recursive: true, mode: 0o700 });
-  const tmpPath = path.join(
-    path.dirname(storePath),
-    `.${path.basename(storePath)}.${process.pid}.${Date.now()}.tmp`,
-  );
-  await fs.writeFile(tmpPath, JSON.stringify(file, null, 2) + '\n', { mode: 0o600 });
-  await fs.rename(tmpPath, storePath);
-  if (os.platform() !== 'win32') {
-    await fs.chmod(storePath, 0o600);
+async function ensureStoreParentPrivate(storePath: string): Promise<void> {
+  const parent = path.dirname(storePath);
+  await fs.mkdir(parent, { recursive: true, mode: 0o700 });
+  if (os.platform() === 'win32') return;
+
+  const stat = await fs.lstat(parent);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`Credential-store parent must be a real directory: ${parent}`);
   }
+  if ((stat.mode & 0o1000) !== 0 || parent === path.parse(parent).root) {
+    throw new Error(`Refusing to use a shared/root directory as credential-store parent: ${parent}`);
+  }
+  if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) {
+    throw new Error(`Credential-store parent is not owned by the current user: ${parent}`);
+  }
+  await fs.chmod(parent, 0o700);
+}
+
+async function writeSecretFile(
+  file: SecretFile,
+  storePath = getSecretStorePath(),
+): Promise<void> {
+  await ensureStoreParentPrivate(storePath);
+  await writePrivateTextFileAtomic(storePath, JSON.stringify(file, null, 2) + '\n', {
+    label: 'Plaintext legacy credential file',
+    parentMode: 0o700,
+  });
 }
 
 function getEncStorePath(): string {
   return expandTilde(process.env[ENC_STORE_PATH_ENV] ?? DEFAULT_ENC_STORE_PATH);
 }
 
-async function readEncFile(key: Buffer): Promise<SecretFile> {
+async function readEncFile(key: Buffer, storePath = getEncStorePath()): Promise<SecretFile> {
+  if (!(await assertPrivateFileIfExists(storePath, 'Encrypted credential file'))) return {};
   try {
-    const raw = await fs.readFile(getEncStorePath(), 'utf8');
+    const raw = await fs.readFile(storePath, 'utf8');
     const enc = JSON.parse(raw) as EncFile;
     return decryptSecretFile(key, enc);
   } catch (err) {
@@ -129,18 +207,20 @@ async function readEncFile(key: Buffer): Promise<SecretFile> {
   }
 }
 
-async function writeEncFile(key: Buffer, data: SecretFile): Promise<void> {
-  const storePath = getEncStorePath();
-  await fs.mkdir(path.dirname(storePath), { recursive: true, mode: 0o700 });
-  const tmpPath = path.join(
-    path.dirname(storePath),
-    `.${path.basename(storePath)}.${process.pid}.${Date.now()}.tmp`,
+async function writeEncFile(
+  key: Buffer,
+  data: SecretFile,
+  storePath = getEncStorePath(),
+): Promise<void> {
+  await ensureStoreParentPrivate(storePath);
+  await writePrivateTextFileAtomic(
+    storePath,
+    JSON.stringify(encryptSecretFile(key, data), null, 2) + '\n',
+    {
+      label: 'Encrypted credential file',
+      parentMode: 0o700,
+    },
   );
-  await fs.writeFile(tmpPath, JSON.stringify(encryptSecretFile(key, data), null, 2) + '\n', {
-    mode: 0o600,
-  });
-  await fs.rename(tmpPath, storePath);
-  if (os.platform() !== 'win32') await fs.chmod(storePath, 0o600);
 }
 
 export async function resolveBackend(): Promise<{ backend: CredentialBackend; reason: string }> {
@@ -162,14 +242,21 @@ export async function resolveBackend(): Promise<{ backend: CredentialBackend; re
     return { backend: 'keytar', reason: 'explicit' };
   }
   if (explicit === 'file') return { backend: 'file', reason: 'explicit' };
+  if (explicit) {
+    throw new Error(`${CREDENTIAL_BACKEND_ENV} must be one of encrypted, keytar, or file`);
+  }
   // auto
   if (await resolveMasterKey()) return { backend: 'encrypted', reason: 'auto: master key present' };
   if (await loadKeytar()) return { backend: 'keytar', reason: 'auto: keytar available' };
-  return { backend: 'file', reason: 'auto: no key and keytar unavailable' };
+  throw new Error(
+    'No secure credential backend is available. Configure keytar, or set ' +
+    `${CREDENTIAL_BACKEND_ENV}=encrypted with ${SECRET_KEY_ENV} or ${SECRET_KEY_FILE_ENV}. ` +
+    `The plaintext file backend is legacy read-only and must be selected explicitly.`,
+  );
 }
 
 export type CredentialDiagnostics = {
-  backend: CredentialBackend;
+  backend: CredentialBackend | 'unavailable';
   reason: string;
   keytarLoaded: boolean;
   keytarError: string | null;
@@ -179,12 +266,12 @@ export type CredentialDiagnostics = {
 };
 
 export async function describeCredentialEnvironment(): Promise<CredentialDiagnostics> {
-  let backend: CredentialBackend;
+  let backend: CredentialDiagnostics['backend'];
   let reason: string;
   try {
     ({ backend, reason } = await resolveBackend());
   } catch (err) {
-    backend = 'file';
+    backend = 'unavailable';
     reason = err instanceof Error ? `unresolved: ${err.message}` : 'unresolved';
   }
   const keytar = await loadKeytar();
@@ -209,6 +296,38 @@ export async function getCredentialBackend(): Promise<CredentialBackend> {
   return (await resolveBackend()).backend;
 }
 
+async function purgePlaintextDuplicate(service: string, account: string): Promise<void> {
+  const storePath = getSecretStorePath();
+  if (!(await assertPrivateFileIfExists(storePath, 'Plaintext legacy credential file'))) return;
+  await ensureStoreParentPrivate(storePath);
+  await withCredentialStoreLock(storePath, async (lock) => {
+    await lock.assertOwned();
+    if (!(await assertPrivateFileIfExists(storePath, 'Plaintext legacy credential file'))) return;
+    const file = await readSecretFile(storePath);
+    const serviceKey = encodeKey(service);
+    const accountKey = encodeKey(account);
+    const accounts = file[serviceKey];
+    if (!accounts || accounts[accountKey] === undefined) return;
+
+    delete accounts[accountKey];
+    if (Object.keys(accounts).length === 0) delete file[serviceKey];
+    await lock.assertOwned();
+    if (Object.keys(file).length === 0) {
+      await fs.unlink(storePath);
+      return;
+    }
+    await writeSecretFile(file, storePath);
+  });
+}
+
+export async function readKeytarCredential(
+  keytar: Pick<KeytarModule, 'getPassword'>,
+  service: string,
+  account: string,
+): Promise<string | null> {
+  return (await keytar.getPassword(service, account)) ?? null;
+}
+
 export async function getCredential(service: string, account: string): Promise<string | null> {
   const { backend } = await resolveBackend();
   if (backend === 'encrypted') {
@@ -218,11 +337,7 @@ export async function getCredential(service: string, account: string): Promise<s
   }
   if (backend === 'keytar') {
     const keytar = await loadKeytar();
-    try {
-      return (await keytar!.getPassword(service, account)) ?? null;
-    } catch {
-      return null;
-    }
+    return readKeytarCredential(keytar!, service, account);
   }
   const file = await readSecretFile();
   return file[encodeKey(service)]?.[encodeKey(account)] ?? null;
@@ -232,58 +347,75 @@ export async function setCredential(
   service: string,
   account: string,
   password: string,
-  options: { allowFileFallback?: boolean } = {},
+  _options: { allowFileFallback?: boolean } = {},
 ): Promise<CredentialBackend> {
   const { backend } = await resolveBackend();
   if (backend === 'encrypted') {
     const key = (await resolveMasterKey())!;
-    const file = await readEncFile(key);
-    (file[encodeKey(service)] ??= {})[encodeKey(account)] = password;
-    await writeEncFile(key, file);
+    const storePath = getEncStorePath();
+    await assertEncryptedAndLegacyStoresDiffer(storePath);
+    await ensureStoreParentPrivate(storePath);
+    await withCredentialStoreLock(storePath, async (lock) => {
+      await lock.assertOwned();
+      const file = await readEncFile(key, storePath);
+      (file[encodeKey(service)] ??= {})[encodeKey(account)] = password;
+      await lock.assertOwned();
+      await writeEncFile(key, file, storePath);
+      await lock.assertOwned();
+      const verified = (await readEncFile(key, storePath))[encodeKey(service)]?.[encodeKey(account)];
+      if (verified !== password) throw new Error('Encrypted credential write verification failed');
+      await purgePlaintextDuplicate(service, account);
+    });
     return 'encrypted';
   }
   if (backend === 'keytar') {
     const keytar = await loadKeytar();
-    try {
-      await keytar!.setPassword(service, account, password);
-      return 'keytar';
-    } catch (err) {
-      if (options.allowFileFallback === false) throw err;
-    }
+    await keytar!.setPassword(service, account, password);
+    const verified = await keytar!.getPassword(service, account);
+    if (verified !== password) throw new Error('Keytar credential write verification failed');
+    await purgePlaintextDuplicate(service, account);
+    return 'keytar';
   }
-  // 여기 도달 = encrypted/keytar 성공 경로를 모두 지나 평문 파일 store 에 쓰기 직전.
-  // allowFileFallback:false 면 백엔드 해석 결과(명시적 file 포함)와 무관하게 거부한다.
-  if (options.allowFileFallback === false) {
-    throw new Error(
-      'Refusing to store secret in the plaintext file backend ' +
-      '(set ECLASS_CREDENTIAL_BACKEND=encrypted with ECLASS_SECRET_KEY, or make keytar available)',
-    );
-  }
-  const file = await readSecretFile();
-  (file[encodeKey(service)] ??= {})[encodeKey(account)] = password;
-  await writeSecretFile(file);
-  return 'file';
+  throw new Error(
+    'The plaintext file backend is legacy read-only. Migrate to keytar or the encrypted backend before writing credentials.',
+  );
 }
 
 export async function deleteCredential(service: string, account: string): Promise<void> {
   const { backend } = await resolveBackend();
   if (backend === 'encrypted') {
     const key = (await resolveMasterKey())!;
-    const file = await readEncFile(key);
-    delete file[encodeKey(service)]?.[encodeKey(account)];
-    await writeEncFile(key, file);
+    const storePath = getEncStorePath();
+    await assertEncryptedAndLegacyStoresDiffer(storePath);
+    await ensureStoreParentPrivate(storePath);
+    await withCredentialStoreLock(storePath, async (lock) => {
+      await lock.assertOwned();
+      const file = await readEncFile(key, storePath);
+      const serviceKey = encodeKey(service);
+      const accounts = file[serviceKey];
+      if (accounts) {
+        delete accounts[encodeKey(account)];
+        if (Object.keys(accounts).length === 0) delete file[serviceKey];
+      }
+      await lock.assertOwned();
+      await writeEncFile(key, file, storePath);
+      await lock.assertOwned();
+      const verified = (await readEncFile(key, storePath))[encodeKey(service)]?.[encodeKey(account)];
+      if (verified !== undefined) throw new Error('Encrypted credential delete verification failed');
+      await purgePlaintextDuplicate(service, account);
+    });
     return;
   }
   if (backend === 'keytar') {
     const keytar = await loadKeytar();
-    try {
-      await keytar!.deletePassword(service, account);
-      return;
-    } catch {
-      // fall through to file cleanup
+    await keytar!.deletePassword(service, account);
+    if ((await keytar!.getPassword(service, account)) !== null) {
+      throw new Error('Keytar credential delete verification failed');
     }
+    await purgePlaintextDuplicate(service, account);
+    return;
   }
-  const file = await readSecretFile();
-  delete file[encodeKey(service)]?.[encodeKey(account)];
-  await writeSecretFile(file);
+  throw new Error(
+    'The plaintext file backend is legacy read-only. Migrate it before deleting credentials.',
+  );
 }

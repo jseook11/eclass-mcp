@@ -25,7 +25,7 @@ import { redactUrl } from '../src/discovery/redact.js';
 // Dev convenience: load credentials from a local .env if present. Without it,
 // buildSession() falls back to the setup-managed configs (env → Hermes →
 // .mcp.json) plus the OS keychain, so a plain terminal run works after
-// `npm run setup`. The production server (src/index.ts) does NOT auto-load
+// `pnpm run setup`. The production server (src/index.ts) does NOT auto-load
 // .env and keeps using the keychain. .env is gitignored.
 const envPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.env');
 if (fs.existsSync(envPath)) {
@@ -48,7 +48,7 @@ async function buildSession(): Promise<BrowserSession> {
   const credentials = await resolveDoctorCredentials();
   const username = credentials.username;
   if (!username) {
-    fail('ECLASS_USERNAME을 찾지 못했습니다 (env / ~/.hermes/config.yaml / .mcp.json). npm run setup 을 먼저 실행하세요.');
+    fail('ECLASS_USERNAME을 찾지 못했습니다 (env / ~/.hermes/config.yaml / .mcp.json). pnpm run setup 을 먼저 실행하세요.');
   }
   return new BrowserSession(username, () => getEclassPassword(
     username,

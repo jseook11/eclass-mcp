@@ -35,6 +35,59 @@ export type RunResult = {
 const PID_FILE = '.chatgptui.pid';
 const HEALTH_URL_FILE = '/tmp/eclass-tunnel-health.url';
 
+const SHARED_CHILD_ENV_KEYS = [
+  'PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL',
+  'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ',
+  'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_RUNTIME_DIR',
+  'DBUS_SESSION_BUS_ADDRESS', 'DISPLAY', 'WAYLAND_DISPLAY',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
+  'SSL_CERT_FILE', 'SSL_CERT_DIR', 'NODE_EXTRA_CA_CERTS',
+  'SystemRoot', 'ComSpec', 'PATHEXT',
+] as const;
+
+const HTTP_ENV_KEYS = [
+  ...SHARED_CHILD_ENV_KEYS,
+  'ECLASS_USERNAME',
+  'ECLASS_PASSWORD',
+  'ALLOW_PLAINTEXT_ENV_SECRETS',
+  'ECLASS_CREDENTIAL_BACKEND',
+  'ECLASS_SECRET_KEY',
+  'ECLASS_SECRET_KEY_FILE',
+  'ECLASS_SECRET_STORE_PATH',
+  'ECLASS_ENC_STORE_PATH',
+  'ECLASS_DB_PATH',
+  'ECLASS_EXAM_DB_PATH',
+  'ECLASS_DOWNLOAD_DIR',
+  'ECLASS_EXAM_DOWNLOAD_DIR',
+  'ECLASS_HTTP_ALLOWED_ORIGINS',
+  'ECLASS_HANDOFF_BASE_URL',
+  'ECLASS_HANDOFF_MAX_BYTES',
+  'DEBUG',
+] as const;
+
+const TUNNEL_ENV_KEYS = [
+  ...SHARED_CHILD_ENV_KEYS,
+  'CONTROL_PLANE_API_KEY',
+  'CONTROL_PLANE_TUNNEL_ID',
+] as const;
+
+function selectEnv(
+  source: Record<string, string | undefined>,
+  keys: readonly string[],
+): Record<string, string> {
+  const selected: Record<string, string> = {};
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined) selected[key] = value;
+  }
+  return selected;
+}
+
+function plaintextEnvOverrideEnabled(raw: string | undefined): boolean {
+  const normalized = raw?.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true';
+}
+
 function killChild(child: ChildLike | undefined): void {
   if (!child) return;
   try {
@@ -61,21 +114,27 @@ export async function runChatgptui(deps: RunDeps): Promise<RunResult> {
     return { ok: false, errors: validated.errors };
   }
 
-  const childEnv: Record<string, string> = {};
-  for (const [key, value] of Object.entries(runtimeEnv)) {
-    if (value !== undefined) childEnv[key] = value;
+  const httpEnv = selectEnv(runtimeEnv, HTTP_ENV_KEYS);
+  if (plaintextEnvOverrideEnabled(runtimeEnv.ALLOW_PLAINTEXT_ENV_SECRETS)) {
+    // Normalize to the exact predicate consumed by src/secrets.ts.
+    httpEnv.ALLOW_PLAINTEXT_ENV_SECRETS = '1';
+  } else {
+    // An ambient password is ignored by the server without explicit opt-in;
+    // do not expose that unused secret to the HTTP child at all.
+    delete httpEnv.ECLASS_PASSWORD;
+    delete httpEnv.ALLOW_PLAINTEXT_ENV_SECRETS;
   }
-  childEnv.ECLASS_REMOTE_AUTH_TOKEN = validated.token;
-  childEnv.ECLASS_TRANSPORT = 'http';
-  if (!childEnv.CONTROL_PLANE_API_KEY && childEnv.OPENAI_API_KEY) {
-    childEnv.CONTROL_PLANE_API_KEY = childEnv.OPENAI_API_KEY;
-  }
+  httpEnv.ECLASS_REMOTE_AUTH_TOKEN = validated.token;
+  httpEnv.ECLASS_TRANSPORT = 'http';
+
+  const tunnelEnv = selectEnv(runtimeEnv, TUNNEL_ENV_KEYS);
+  tunnelEnv.ECLASS_REMOTE_AUTH_TOKEN = validated.token;
 
   let http: ChildLike | undefined;
   let tunnel: ChildLike | undefined;
   try {
     deps.log(`HTTP MCP 서버 기동 (127.0.0.1:${validated.port})`);
-    http = deps.spawn('node', ['dist/index.js', '--http', '--port', String(validated.port)], { env: childEnv });
+    http = deps.spawn('node', ['dist/index.js', '--http', '--port', String(validated.port)], { env: httpEnv });
 
     const httpReady = await deps.waitHttpReady(validated.port, validated.token);
     if (!httpReady) {
@@ -90,7 +149,7 @@ export async function runChatgptui(deps: RunDeps): Promise<RunResult> {
       { managedProfile: validated.managedProfile },
     );
 
-    const doctor = await deps.runDoctor(validated.profilePath, childEnv);
+    const doctor = await deps.runDoctor(validated.profilePath, tunnelEnv);
     if (doctor.warning) deps.log(doctor.warning);
     if (doctor.tolerated.length > 0) {
       deps.log(`doctor 허용된 실패(non-OAuth 정상): ${doctor.tolerated.join(', ')}`);
@@ -117,7 +176,7 @@ export async function runChatgptui(deps: RunDeps): Promise<RunResult> {
         '--log.level',
         'info',
       ],
-      { env: childEnv },
+      { env: tunnelEnv },
     );
 
     const tunnelReady = await deps.waitTunnelReady(HEALTH_URL_FILE);

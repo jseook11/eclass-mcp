@@ -22,7 +22,7 @@ export class CanvasClient {
   constructor(
     private baseUrl: string,
     private token: string,
-    private onAuthError?: () => Promise<string>,
+    private onAuthError?: (rejectedToken: string) => Promise<string>,
   ) {}
 
   getToken(): string {
@@ -31,12 +31,16 @@ export class CanvasClient {
 
   private async authedFetch(url: string, init: { method?: string; body?: URLSearchParams; contentType?: string }): Promise<Response> {
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      // Capture per request. Another concurrent 401 may refresh this.token
+      // before this response arrives, but the callback still needs to identify
+      // the credential that this exact request sent.
+      const requestToken = this.token;
       const response = await fetch(url, {
         method: init.method ?? 'GET',
         redirect: 'error',
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         headers: {
-          Authorization: `Bearer ${this.token}`,
+          Authorization: `Bearer ${requestToken}`,
           Accept: ACCEPT_HEADER,
           ...(init.contentType ? { 'Content-Type': init.contentType } : {}),
         },
@@ -45,7 +49,7 @@ export class CanvasClient {
 
       // 401 = 토큰 만료/회수. 캐시 토큰을 폐기하고 재로그인 후 한 번만 재시도.
       if (response.status === 401 && this.onAuthError && attempt === 0) {
-        this.token = await this.onAuthError();
+        this.token = await this.onAuthError(requestToken);
         continue;
       }
 

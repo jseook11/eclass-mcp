@@ -26,15 +26,15 @@ export function validateChatgptuiEnv(env: Record<string, string | undefined>): C
   if (env.ECLASS_CREDENTIAL_BACKEND === 'encrypted' && !hasMasterKey) {
     errors.push('마스터 키 미주입 — ECLASS_SECRET_KEY 또는 ECLASS_SECRET_KEY_FILE 필요');
   }
-  const controlPlaneKey = env.CONTROL_PLANE_API_KEY || env.OPENAI_API_KEY;
+  const controlPlaneKey = env.CONTROL_PLANE_API_KEY?.trim();
   if (!controlPlaneKey) {
-    errors.push('control plane 키 미설정 — CONTROL_PLANE_API_KEY (또는 OPENAI_API_KEY) 필요');
+    errors.push('control plane 키 미설정 — 전용 CONTROL_PLANE_API_KEY 필요');
   }
   const tunnelId = env.CONTROL_PLANE_TUNNEL_ID?.trim() ?? '';
   if (!tunnelId) {
     errors.push('tunnel id 미설정 — CONTROL_PLANE_TUNNEL_ID 필요 (Platform Tunnels에서 발급)');
   }
-  if (!env.ECLASS_USERNAME) {
+  if (!env.ECLASS_USERNAME?.trim()) {
     errors.push('eclass 사용자 미설정 — ECLASS_USERNAME 필요. 먼저 `pnpm run setup`을 실행하세요.');
   }
 

@@ -7,7 +7,7 @@ import { validateChatgptuiEnv } from '../src/chatgptui/env.js';
 function baseEnv(): Record<string, string> {
   return {
     ECLASS_CREDENTIAL_BACKEND: 'encrypted',
-    ECLASS_SECRET_KEY: 'a'.repeat(44),
+    ECLASS_SECRET_KEY: Buffer.alloc(32, 1).toString('base64'),
     CONTROL_PLANE_API_KEY: 'sk-test',
     CONTROL_PLANE_TUNNEL_ID: 'tunnel_abc',
     ECLASS_USERNAME: 'student1',
@@ -70,12 +70,13 @@ test('validateChatgptuiEnv requires a master key only when encrypted backend is 
   assert.ok(r.errors.some((e) => e.includes('ECLASS_SECRET_KEY')));
 });
 
-test('validateChatgptuiEnv accepts OPENAI_API_KEY as control plane fallback', () => {
+test('validateChatgptuiEnv requires the dedicated control-plane key and rejects OPENAI_API_KEY fallback', () => {
   const env = { ...baseEnv() };
   delete env.CONTROL_PLANE_API_KEY;
   env.OPENAI_API_KEY = 'sk-fallback';
   const r = validateChatgptuiEnv(env);
-  assert.equal(r.ok, true);
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((error) => error.includes('CONTROL_PLANE_API_KEY')));
 });
 
 test('validateChatgptuiEnv collects multiple missing-env errors and never leaks secret values', () => {

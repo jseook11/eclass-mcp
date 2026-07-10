@@ -3,15 +3,37 @@ import type { BrowserContext, Frame, Page, Request, Response } from 'playwright'
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import type { CachedToken, ResourceItem } from './types.js';
+import type { CachedToken, CachedTokenRevocation, CachedTokenV2, ResourceItem } from './types.js';
 import { CanvasClient } from './canvas-client.js';
+import {
+  CANVAS_BASE_URL,
+  CANVAS_JSON_ACCEPT,
+  CANVAS_TOKEN_LIFETIME_MS,
+  canAdoptCachedToken,
+  createCanvasTokenPurpose,
+  createCachedTokenV2,
+  extractCreatedCanvasTokenCandidate,
+  isCachedTokenV2,
+  parseCachedTokenCredential,
+  pendingRevocationsForRotation,
+  revokeCanvasToken,
+  revocationForCreatedCanvasTokenCompensation,
+  revocationIdentifier,
+  sameCachedTokenGeneration,
+  sameCachedTokenSnapshot,
+  selectCanvasTokenForRecovery,
+} from './canvas-token-lifecycle.js';
+import { withCanvasTokenLock } from './canvas-token-lock.js';
+import type { CanvasTokenLock } from './canvas-token-lock.js';
+import { CanvasTokenRevocationLedger } from './canvas-token-revocation-ledger.js';
 import { deleteCredential, getCredential, setCredential } from './credential-store.js';
+import { redactUrl } from './discovery/redact.js';
 import { debugLog } from './secrets.js';
 import { fetchCourseResourceViaApi } from './learningx-client.js';
 import { parseModulebuilderItems, parseResourceItems } from './resource-items.js';
 import { sanitizeFileName } from './utils.js';
 
-const BASE_URL = 'https://eclass3.cau.ac.kr';
+const BASE_URL = CANVAS_BASE_URL;
 const KEYCHAIN_SERVICE = 'eclass-mcp';
 
 // Allowlist of origins that may receive credentials (cookies or Bearer token)
@@ -42,29 +64,55 @@ function expandTilde(filePath: string): string {
 }
 
 async function readTokenFromKeychain(username: string): Promise<CachedToken | null> {
-  try {
-    const raw = await getCredential(KEYCHAIN_SERVICE, `token:${username}`);
-    return raw ? JSON.parse(raw) as CachedToken : null;
-  } catch {
-    return null;
-  }
+  const raw = await getCredential(KEYCHAIN_SERVICE, `token:${username}`);
+  return parseCachedTokenCredential(raw);
 }
 
 async function writeTokenToKeychain(username: string, cached: CachedToken): Promise<void> {
-  await setCredential(KEYCHAIN_SERVICE, `token:${username}`, JSON.stringify(cached));
+  await setCredential(
+    KEYCHAIN_SERVICE,
+    `token:${username}`,
+    JSON.stringify(cached),
+    { allowFileFallback: false },
+  );
 }
 
-async function readSessionFromKeychain(username: string): Promise<object | null> {
+export function parseCachedSessionCredential(raw: string | null): object | null {
+  if (raw === null) return null;
   try {
-    const raw = await getCredential(KEYCHAIN_SERVICE, `session:${username}`);
-    return raw ? JSON.parse(raw) as object : null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed) ||
+      !('cookies' in parsed) ||
+      !Array.isArray(parsed.cookies) ||
+      !('origins' in parsed) ||
+      !Array.isArray(parsed.origins)
+    ) {
+      throw new Error('invalid session cache shape');
+    }
+    return parsed;
   } catch {
+    // The credential backend succeeded, so this is isolated cache corruption,
+    // not an unavailable secure store. A fresh login may safely replace it.
+    debugLog('browser-session', 'Cached browser session is corrupt; ignoring it');
     return null;
   }
 }
 
+async function readSessionFromKeychain(username: string): Promise<object | null> {
+  const raw = await getCredential(KEYCHAIN_SERVICE, `session:${username}`);
+  return parseCachedSessionCredential(raw);
+}
+
 async function writeSessionToKeychain(username: string, state: object): Promise<void> {
-  await setCredential(KEYCHAIN_SERVICE, `session:${username}`, JSON.stringify(state));
+  await setCredential(
+    KEYCHAIN_SERVICE,
+    `session:${username}`,
+    JSON.stringify(state),
+    { allowFileFallback: false },
+  );
 }
 
 async function deleteSessionFromKeychain(username: string): Promise<void> {
@@ -75,10 +123,200 @@ async function deleteSessionFromKeychain(username: string): Promise<void> {
   }
 }
 
-function isTokenValid(cached: CachedToken): boolean {
-  const expiresAt = new Date(cached.expires_at).getTime();
-  const bufferMs = 60 * 60 * 1000; // 1-hour buffer
-  return expiresAt > Date.now() + bufferMs;
+interface BrowserTokenCreationResponse {
+  ok: boolean;
+  status: number;
+  responseUrl: string;
+  body: unknown;
+  bodyParsed: boolean;
+}
+
+interface BrowserTokenListResponse {
+  ok: boolean;
+  status: number;
+  responseUrl: string;
+  body: unknown;
+}
+
+class CanvasTokenCacheChangedError extends Error {
+  constructor(readonly latest: CachedToken | null) {
+    super('Canvas token cache changed during rotation');
+  }
+}
+
+export function buildCanvasTokenCompensationRetentionError(
+  operationError: unknown,
+  ledgerError: unknown,
+): Error {
+  return new Error(
+    'A newly issued Canvas token could not be revoked or recorded because secure ' +
+    'credential storage failed. The token may still be live; manually revoke the ' +
+    'eclass-mcp token in Canvas profile settings before retrying.',
+    {
+      cause: new AggregateError(
+        [operationError, ledgerError],
+        'Token operation and ledger append both failed',
+      ),
+    },
+  );
+}
+
+export function buildCanvasTokenRecoveryManualCleanupError(
+  operationError: unknown,
+  recoveryError: unknown,
+): Error {
+  return new Error(
+    'Canvas token creation may have succeeded, but the exact issued token could not be ' +
+    'identified and revoked safely. Manually review Canvas profile settings and revoke ' +
+    'the correlated eclass-mcp token before retrying.',
+    {
+      cause: new AggregateError(
+        [operationError, recoveryError],
+        'Token creation and exact recovery both failed',
+      ),
+    },
+  );
+}
+
+function isSameOriginCanvasResponse(responseUrl: string): boolean {
+  if (!responseUrl) return false;
+  try {
+    return new URL(responseUrl).origin === BASE_URL;
+  } catch {
+    return false;
+  }
+}
+
+async function createCanvasTokenFromAuthenticatedPage(
+  page: Page,
+  requestedExpiresAt: string,
+  purpose: string,
+): Promise<BrowserTokenCreationResponse> {
+  if (new URL(page.url()).origin !== BASE_URL) {
+    throw new Error('Canvas token creation requires an authenticated same-origin page');
+  }
+
+  return page.evaluate(async ({ baseUrl, expiresAt, tokenPurpose, acceptHeader }) => {
+    if (window.location.origin !== baseUrl) {
+      throw new Error('Canvas token creation page changed origin');
+    }
+    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement | null)?.content;
+    const headers: Record<string, string> = {
+      Accept: acceptHeader,
+      'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    };
+    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+
+    const form = new URLSearchParams();
+    form.set('token[purpose]', tokenPurpose);
+    form.set('token[expires_at]', expiresAt);
+    const response = await fetch('/api/v1/users/self/tokens', {
+      method: 'POST',
+      credentials: 'same-origin',
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
+      headers,
+      body: form.toString(),
+    });
+    const text = await response.text();
+    let body: unknown = null;
+    let bodyParsed = false;
+    if (text) {
+      try {
+        body = JSON.parse(text) as unknown;
+        bodyParsed = true;
+      } catch {
+        body = null;
+      }
+    }
+    return {
+      ok: response.ok,
+      status: response.status,
+      responseUrl: response.url,
+      body,
+      bodyParsed,
+    };
+  }, {
+    baseUrl: BASE_URL,
+    expiresAt: requestedExpiresAt,
+    tokenPurpose: purpose,
+    acceptHeader: CANVAS_JSON_ACCEPT,
+  });
+}
+
+export async function listCanvasTokensFromAuthenticatedPage(page: Page): Promise<unknown> {
+  if (new URL(page.url()).origin !== BASE_URL) {
+    throw new Error('Canvas token recovery requires an authenticated same-origin page');
+  }
+  const result: BrowserTokenListResponse = await page.evaluate(
+    async ({ baseUrl, acceptHeader }) => {
+      if (window.location.origin !== baseUrl) {
+        throw new Error('Canvas token recovery page changed origin');
+      }
+      const response = await fetch(
+        '/api/v1/users/self/user_generated_tokens?per_page=100',
+        {
+          method: 'GET',
+          credentials: 'same-origin',
+          redirect: 'error',
+          signal: AbortSignal.timeout(15_000),
+          headers: { Accept: acceptHeader },
+        },
+      );
+      const text = await response.text();
+      return {
+        ok: response.ok,
+        status: response.status,
+        responseUrl: response.url,
+        body: text ? JSON.parse(text) as unknown : null,
+      };
+    },
+    { baseUrl: BASE_URL, acceptHeader: CANVAS_JSON_ACCEPT },
+  );
+  if (!isSameOriginCanvasResponse(result.responseUrl)) {
+    throw new Error('Canvas token recovery response came from an unexpected origin');
+  }
+  if (!result.ok) {
+    throw new Error(`Canvas token recovery listing failed (${result.status})`);
+  }
+  return result.body;
+}
+
+export async function revokeCanvasTokenFromAuthenticatedPage(
+  page: Page,
+  revocation: CachedTokenRevocation,
+): Promise<boolean> {
+  const identifier = revocationIdentifier(revocation);
+  if (!identifier) return false;
+
+  try {
+    if (new URL(page.url()).origin !== BASE_URL) return false;
+    const result = await page.evaluate(async ({ baseUrl, tokenIdentifier, acceptHeader }) => {
+      if (window.location.origin !== baseUrl) return { status: 0, responseUrl: '' };
+      const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement | null)?.content;
+      const headers: Record<string, string> = { Accept: acceptHeader };
+      if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+      const response = await fetch(
+        `/api/v1/users/self/tokens/${encodeURIComponent(tokenIdentifier)}`,
+        {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          redirect: 'error',
+          signal: AbortSignal.timeout(15_000),
+          headers,
+        },
+      );
+      return { status: response.status, responseUrl: response.url };
+    }, {
+      baseUrl: BASE_URL,
+      tokenIdentifier: identifier,
+      acceptHeader: CANVAS_JSON_ACCEPT,
+    });
+    if (!result.responseUrl || new URL(result.responseUrl).origin !== BASE_URL) return false;
+    return (result.status >= 200 && result.status < 300) || result.status === 404;
+  } catch {
+    return false;
+  }
 }
 
 export function isSsoLoginUrl(rawUrl: string): boolean {
@@ -139,8 +377,32 @@ function trackRecent(entries: string[], value: string, limit = 12): void {
   if (entries.length > limit) entries.shift();
 }
 
+const DIAGNOSTIC_URL_PATTERN = /(?:https?|blob:https?):\/\/[^\s|]+/gi;
+const DIAGNOSTIC_SECRET_QUERY_PATTERN = /([?&#](?:[^=&#]*(?:token|secret|password|session|cookie|auth|signature|sig|verifier|ticket|sso|saml|assertion|relay|oauth|code|state|jwt|key)[^=&#]*)=)[^&\s|]*/gi;
+
+export function redactBrowserDiagnostic(value: string): string {
+  return value
+    .replace(DIAGNOSTIC_URL_PATTERN, (url) => redactUrl(url))
+    .replace(DIAGNOSTIC_SECRET_QUERY_PATTERN, '$1[REDACTED]');
+}
+
+function redactBrowserUrl(rawUrl: string, baseUrl?: string): string {
+  if (baseUrl) {
+    try {
+      return redactUrl(new URL(rawUrl, baseUrl).toString());
+    } catch {
+      // Fall through to the fail-closed unparseable marker.
+    }
+  }
+  return redactUrl(rawUrl);
+}
+
+function sessionRedirectError(rawUrl: string): Error {
+  return new Error(`SESSION_REDIRECT:${redactBrowserUrl(rawUrl)}`);
+}
+
 function summarizeRecent(entries: string[]): string {
-  return entries.length > 0 ? entries.join(' | ') : 'none';
+  return entries.length > 0 ? entries.map(redactBrowserDiagnostic).join(' | ') : 'none';
 }
 
 function isTrackedBrowserUrl(url: string): boolean {
@@ -188,14 +450,18 @@ function isDownloadableResponse(response: Response): boolean {
 }
 
 export function buildOcsCaptureFailureMessage(details: OcsCaptureFailureDetails): string {
-  const finalPage = details.finalPageUrl || '(unknown)';
+  const finalPage = details.finalPageUrl ? redactBrowserUrl(details.finalPageUrl) : '(unknown)';
   const title = details.pageTitle || '(unknown)';
   const recentFrames = summarizeRecent(details.recentFrames);
   const recentRequests = summarizeRecent(details.recentRequests);
   const recentResponses = summarizeRecent(details.recentResponses);
   const mediaCandidates = summarizeRecent(details.mediaCandidates);
-  const videoSources = summarizeRecent(details.videoSources);
-  const iframeSources = summarizeRecent(details.iframeSources);
+  const videoSources = summarizeRecent(
+    details.videoSources.map((url) => redactBrowserUrl(url, details.finalPageUrl)),
+  );
+  const iframeSources = summarizeRecent(
+    details.iframeSources.map((url) => redactBrowserUrl(url, details.finalPageUrl)),
+  );
 
   return (
     'OCS viewer loaded but no downloadable file response was captured.\n' +
@@ -241,8 +507,12 @@ export class BrowserSession {
    */
   async getClient(): Promise<CanvasClient> {
     if (this.client) return this.client;
+    return this.startLogin();
+  }
+
+  private startLogin(rejectedToken?: string): Promise<CanvasClient> {
     if (!this.loginPromise) {
-      this.loginPromise = this._doLogin().catch((err: unknown) => {
+      this.loginPromise = this._doLogin(rejectedToken).catch((err: unknown) => {
         this.loginPromise = null; // allow retry on failure
         throw err;
       });
@@ -268,7 +538,7 @@ export class BrowserSession {
           throw new Error(
             'Playwright Chromium 검차 실패: 브라우저를 실행할 수 없습니다.\n' +
             `  원인: ${message}\n` +
-            '  해결: npm -C mcp-server run install:browser',
+            '  해결: pnpm run install:browser',
           );
         } finally {
           await browser?.close().catch(() => undefined);
@@ -318,20 +588,25 @@ export class BrowserSession {
     };
   }
 
-  /**
-   * Called by CanvasClient when a request comes back 401: the cached token was
-   * expired or revoked server-side, which a locally fabricated expires_at can't
-   * detect. Purges the Keychain token and re-logs-in once (single-flight).
-   */
-  private async refreshTokenAfterAuthError(): Promise<string> {
+  private createCanvasClient(token: string): CanvasClient {
+    return new CanvasClient(
+      BASE_URL,
+      token,
+      (rejectedToken) => this.refreshTokenAfterAuthError(rejectedToken),
+    );
+  }
+
+  /** Called by CanvasClient after a 401. The rejected token is carried into the
+   * interprocess critical section so a newer token from another process can be
+   * adopted instead of rotated away. */
+  private async refreshTokenAfterAuthError(rejectedToken: string): Promise<string> {
     if (!this.tokenRefreshPromise) {
       this.tokenRefreshPromise = (async () => {
         try {
-          debugLog('browser-session', 'Canvas returned 401; purging cached token and re-logging in');
-          await deleteCredential(KEYCHAIN_SERVICE, `token:${this.username}`).catch(() => undefined);
+          debugLog('browser-session', 'Canvas returned 401; reconciling the shared token cache');
           this.client = null;
           this.loginPromise = null;
-          const client = await this.getClient();
+          const client = await this.startLogin(rejectedToken);
           return client.getToken();
         } finally {
           this.tokenRefreshPromise = null;
@@ -341,14 +616,73 @@ export class BrowserSession {
     return this.tokenRefreshPromise;
   }
 
-  private async _doLogin(): Promise<CanvasClient> {
-    // Try cached token from Keychain first
-    const cached = await readTokenFromKeychain(this.username);
-    if (cached && isTokenValid(cached)) {
-      debugLog('browser-session', 'Using cached token');
-      this.lastAuthSource = 'cache';
-      this.client = new CanvasClient(BASE_URL, cached.token, () => this.refreshTokenAfterAuthError());
-      return this.client;
+  private async retryPendingTokenRevocations(
+    cached: CachedTokenV2,
+    ledger: CanvasTokenRevocationLedger,
+    lock: CanvasTokenLock,
+  ): Promise<CachedTokenV2> {
+    await lock.assertOwned();
+    // Merge the independent ledger with the legacy embedded queue, excluding
+    // both the active id and its hint. The ledger is durably updated before the
+    // embedded queue is compacted, so crashes can only cause safe duplicate
+    // retries (successful deletion is subsequently observed as 404).
+    await ledger.retry(lock, cached, cached.pending_revocations);
+    const updated: CachedTokenV2 = { ...cached, pending_revocations: [] };
+
+    if (cached.pending_revocations.length > 0) {
+      await lock.assertOwned();
+      const current = await readTokenFromKeychain(this.username);
+      if (!sameCachedTokenSnapshot(current, cached)) {
+        debugLog('browser-session', 'Skipped stale Canvas token revocation queue compaction');
+        return current && isCachedTokenV2(current) ? current : cached;
+      }
+      try {
+        await writeTokenToKeychain(this.username, updated);
+      } catch {
+        // The already-persisted queue is a safe superset and will be retried on
+        // the next startup. Never fall back to plaintext just to compact it.
+        debugLog('browser-session', 'Could not persist the compacted Canvas token revocation queue');
+      }
+    }
+    return updated;
+  }
+
+  private async _doLogin(rejectedToken?: string): Promise<CanvasClient> {
+    return withCanvasTokenLock(
+      this.username,
+      (lock) => this._doLoginWithTokenLock(lock, rejectedToken),
+    );
+  }
+
+  private async _doLoginWithTokenLock(
+    lock: CanvasTokenLock,
+    rejectedToken?: string,
+  ): Promise<CanvasClient> {
+    await lock.assertOwned();
+    const revocationLedger = new CanvasTokenRevocationLedger(this.username);
+    // Only V2 caches are reusable. Legacy V1 caches must rotate so their old
+    // token can be represented by its deterministic five-character hint.
+    let cached = await readTokenFromKeychain(this.username);
+    // Fail closed on ledger backend/schema errors before issuing another token.
+    await revocationLedger.read(lock);
+    if (cached && canAdoptCachedToken(cached, rejectedToken)) {
+      debugLog(
+        'browser-session',
+        rejectedToken === undefined
+          ? 'Using cached token'
+          : 'Adopting a newer Canvas token issued by another process',
+      );
+      const usableCached = await this.retryPendingTokenRevocations(
+        cached,
+        revocationLedger,
+        lock,
+      );
+      if (canAdoptCachedToken(usableCached, rejectedToken)) {
+        this.lastAuthSource = 'cache';
+        this.client = this.createCanvasClient(usableCached.token);
+        return this.client;
+      }
+      cached = usableCached;
     }
 
     // Need to log in and issue a new token
@@ -362,65 +696,188 @@ export class BrowserSession {
       const page = await context.newPage();
       await this.loginToEclass(page);
 
-      // Issue a new Canvas API token via profile settings UI
-      // (The Canvas REST API token endpoint is not accessible on this eclass instance)
-      debugLog('browser-session', 'Navigating to profile settings to generate token');
+      // Establish a same-origin authenticated page, then call Canvas's token API
+      // with that page's cookies and CSRF token. The secret never enters the DOM.
+      debugLog('browser-session', 'Creating a 90-day Canvas API token from an authenticated page');
       await page.goto(`${BASE_URL}/profile/settings`, { waitUntil: 'networkidle', timeout: 15000 });
-
-      // Click "새 액세스 토큰" button
-      await page.locator('text=새 액세스 토큰').click();
-      await page.waitForSelector('#access_token_form', { timeout: 5000 });
-
-      // Fill in purpose
-      await page.locator('#access_token_purpose').fill('eclass-mcp');
-
-      // Click the jQuery UI dialog submit button "토큰 생성"
-      await page.locator('.ui-dialog-buttonset button:has-text("토큰 생성")').click();
-
-      // Wait for token value to appear in .visible_token
-      await page.waitForFunction(
-        () => {
-          const el = document.querySelector('.visible_token');
-          return el !== null && el.textContent !== null && el.textContent.trim().length > 0;
-        },
-        { timeout: 10000 },
-      );
-
-      const rawToken = await page.locator('.visible_token').textContent();
-      if (!rawToken || !rawToken.trim()) {
-        throw new Error('Token generation succeeded but token value is empty');
+      if (isSsoLoginUrl(page.url())) {
+        throw new Error('로그인 세션이 프로필 설정 페이지로 이동하기 전에 만료되었습니다.');
       }
-
-      const expiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
-      const tokenResponse = { token: rawToken.trim(), expires_at: expiresAt };
-
-      const newCached: CachedToken = {
-        token: tokenResponse.token,
-        expires_at: tokenResponse.expires_at ?? expiresAt,
-      };
-
-      // Validate token BEFORE persisting — if this fails, nothing is cached
-      const validateRes = await fetch(`${BASE_URL}/api/v1/users/self`, {
-        redirect: 'error',
-        signal: AbortSignal.timeout(30_000),
-        headers: { Authorization: `Bearer ${newCached.token}`, Accept: 'application/json' },
-      });
-      if (!validateRes.ok) {
-        throw new Error(
-          `토큰 검증 실패 (${validateRes.status}): 로그인에 문제가 있습니다.\n` +
-          '  npm run setup 을 다시 실행하세요.',
+      const requestStartedAt = new Date().toISOString();
+      const requestedExpiresAt = new Date(
+        Date.parse(requestStartedAt) + CANVAS_TOKEN_LIFETIME_MS,
+      ).toISOString();
+      const purpose = createCanvasTokenPurpose();
+      let creation: BrowserTokenCreationResponse | null = null;
+      let creationCallError: unknown = null;
+      try {
+        creation = await createCanvasTokenFromAuthenticatedPage(
+          page,
+          requestedExpiresAt,
+          purpose,
         );
+      } catch (err) {
+        // The POST may have committed before fetch/response transport failed.
+        // Compensation below reconciles by this attempt's unique purpose.
+        creationCallError = err;
       }
+      const candidate = creation
+        ? extractCreatedCanvasTokenCandidate(creation.body)
+        : null;
+      let persisted = false;
 
-      // Persist only after validation succeeds
-      const sessionState = await context.storageState();
-      await writeSessionToKeychain(this.username, sessionState);
-      await writeTokenToKeychain(this.username, newCached);
-      debugLog('browser-session', 'New token issued and cached in Keychain');
+      try {
+        if (!creation) {
+          throw new Error('Canvas token creation response was not received', {
+            cause: creationCallError,
+          });
+        }
+        if (!isSameOriginCanvasResponse(creation.responseUrl)) {
+          throw new Error('Canvas token creation response came from an unexpected origin');
+        }
+        if (!creation.ok) {
+          throw new Error(`Canvas token creation failed (${creation.status})`);
+        }
+        if (!candidate) {
+          throw new Error('Canvas token creation response did not include a visible token');
+        }
 
-      this.lastAuthSource = 'login';
-      this.client = new CanvasClient(BASE_URL, newCached.token, () => this.refreshTokenAfterAuthError());
-      return this.client;
+        let newCached = createCachedTokenV2(candidate, requestStartedAt, requestedExpiresAt);
+
+        // Validate before persisting. Any failure below is compensated by
+        // revoking the newly-created token while the browser session is alive.
+        const validateRes = await fetch(`${BASE_URL}/api/v1/users/self`, {
+          redirect: 'error',
+          signal: AbortSignal.timeout(30_000),
+          headers: { Authorization: `Bearer ${newCached.token}`, Accept: CANVAS_JSON_ACCEPT },
+        });
+        if (!validateRes.ok) {
+          throw new Error(
+            `토큰 검증 실패 (${validateRes.status}): 로그인에 문제가 있습니다.\n` +
+            '  pnpm run setup 을 다시 실행하세요.',
+          );
+        }
+
+        await lock.assertOwned();
+        const latestCached = await readTokenFromKeychain(this.username);
+        if (!sameCachedTokenGeneration(cached, latestCached)) {
+          throw new CanvasTokenCacheChangedError(latestCached);
+        }
+        // A same-generation queue may have been compacted by a process that did
+        // not yet implement the lock. Merge from the latest snapshot.
+        newCached = {
+          ...newCached,
+          pending_revocations: pendingRevocationsForRotation(latestCached, newCached),
+        };
+
+        // Persist the new token (including the old-token revocation queue)
+        // before attempting any old-token deletion. A crash can only leave a
+        // retryable queue, never lose the metadata required to revoke it.
+        const sessionState = await context.storageState();
+        await writeSessionToKeychain(this.username, sessionState);
+        await lock.assertOwned();
+        const beforeTokenWrite = await readTokenFromKeychain(this.username);
+        if (!sameCachedTokenSnapshot(latestCached, beforeTokenWrite)) {
+          throw new CanvasTokenCacheChangedError(beforeTokenWrite);
+        }
+        try {
+          await writeTokenToKeychain(this.username, newCached);
+          persisted = true;
+        } catch (err) {
+          // Do not revoke a token that the backend durably stored before
+          // reporting a post-write verification/cleanup error.
+          const observed = await readTokenFromKeychain(this.username);
+          persisted = sameCachedTokenSnapshot(observed, newCached);
+          throw err;
+        }
+        debugLog('browser-session', 'New Canvas token and revocation metadata stored securely');
+
+        newCached = await this.retryPendingTokenRevocations(
+          newCached,
+          revocationLedger,
+          lock,
+        );
+        this.lastAuthSource = 'login';
+        this.client = this.createCanvasClient(newCached.token);
+        return this.client;
+      } catch (err) {
+        let unresolvedCreatedRevocation: CachedTokenRevocation | null = null;
+        let compensationRevocation = creation
+          ? revocationForCreatedCanvasTokenCompensation(creation, persisted)
+          : null;
+        const requiresExactRecovery = !persisted &&
+          !compensationRevocation &&
+          (
+            creation === null ||
+            !isSameOriginCanvasResponse(creation.responseUrl) ||
+            !creation.bodyParsed ||
+            creation.ok
+          );
+        if (requiresExactRecovery) {
+          try {
+            const listedTokens = await listCanvasTokensFromAuthenticatedPage(page);
+            const selection = selectCanvasTokenForRecovery(listedTokens, {
+              purpose,
+              request_started_at: requestStartedAt,
+              requested_expires_at: requestedExpiresAt,
+              observed_at: new Date().toISOString(),
+            });
+            if (selection.kind !== 'found') {
+              throw new Error(`Exact Canvas token recovery result: ${selection.kind}`);
+            }
+            compensationRevocation = selection.revocation;
+          } catch (recoveryErr) {
+            throw buildCanvasTokenRecoveryManualCleanupError(err, recoveryErr);
+          }
+        }
+        if (compensationRevocation) {
+          let revoked = await revokeCanvasTokenFromAuthenticatedPage(page, compensationRevocation);
+          if (
+            !revoked &&
+            candidate &&
+            creation &&
+            isSameOriginCanvasResponse(creation.responseUrl)
+          ) {
+            revoked = await revokeCanvasToken(
+              candidate.token,
+              compensationRevocation,
+            );
+          }
+          if (!revoked) {
+            debugLog('browser-session', 'Could not compensate by revoking the newly-created Canvas token');
+            unresolvedCreatedRevocation = compensationRevocation;
+          }
+        }
+        if (unresolvedCreatedRevocation) {
+          const activeForSafety = err instanceof CanvasTokenCacheChangedError
+            ? err.latest
+            : cached;
+          try {
+            await revocationLedger.append(lock, unresolvedCreatedRevocation, activeForSafety);
+          } catch (ledgerErr) {
+            throw buildCanvasTokenCompensationRetentionError(err, ledgerErr);
+          }
+          debugLog('browser-session', 'Retained failed Canvas token compensation in the secure ledger');
+        }
+        const latest = err instanceof CanvasTokenCacheChangedError
+          ? err.latest
+          : await readTokenFromKeychain(this.username);
+        if (err instanceof CanvasTokenCacheChangedError && latest) {
+          if (!canAdoptCachedToken(latest, rejectedToken)) throw err;
+          debugLog('browser-session', 'Adopting Canvas token that won a concurrent cache update');
+          const adopted = await this.retryPendingTokenRevocations(
+            latest,
+            revocationLedger,
+            lock,
+          );
+          if (canAdoptCachedToken(adopted, rejectedToken)) {
+            this.lastAuthSource = 'cache';
+            this.client = this.createCanvasClient(adopted.token);
+            return this.client;
+          }
+        }
+        throw err;
+      }
     } finally {
       await browser.close();
     }
@@ -442,16 +899,16 @@ export class BrowserSession {
     ]);
 
     const parsedLoginUrl = new URL(page.url());
-    if (parsedLoginUrl.hostname !== 'eclass3.cau.ac.kr') {
+    if (parsedLoginUrl.hostname !== 'eclass3.cau.ac.kr' || isSsoLoginUrl(page.url())) {
       throw new Error(
         '로그인 실패: 아이디 또는 비밀번호가 올바르지 않습니다.\n' +
-        '  npm run setup 을 다시 실행하여 비밀번호를 업데이트하세요.',
+        '  pnpm run setup 을 다시 실행하여 비밀번호를 업데이트하세요.',
       );
     }
     debugLog('browser-session', 'Login successful');
   }
 
-  private async refreshBrowserSession(): Promise<void> {
+  private async refreshBrowserSession(lock: CanvasTokenLock): Promise<void> {
     debugLog('browser-session', 'Refreshing browser session via login');
     const browser = await chromium.launch({ headless: true });
     try {
@@ -462,6 +919,7 @@ export class BrowserSession {
       const page = await context.newPage();
       await this.loginToEclass(page);
       const sessionState = await context.storageState();
+      await lock.assertOwned();
       await writeSessionToKeychain(this.username, sessionState);
       debugLog('browser-session', 'Browser session refreshed in Keychain');
     } finally {
@@ -493,9 +951,15 @@ export class BrowserSession {
           const message = err instanceof Error ? err.message : String(err);
           if (attempt === 0 && message.startsWith('SESSION_REDIRECT:')) {
             const redirectedUrl = message.slice('SESSION_REDIRECT:'.length);
-            debugLog('browser-session', `${label} redirected to login, refreshing session: ${redirectedUrl}`);
-            await deleteSessionFromKeychain(this.username);
-            await this.refreshBrowserSession();
+            debugLog(
+              'browser-session',
+              `${label} redirected to login, refreshing session: ${redactBrowserUrl(redirectedUrl)}`,
+            );
+            await withCanvasTokenLock(this.username, async (lock) => {
+              await lock.assertOwned();
+              await deleteSessionFromKeychain(this.username);
+              await this.refreshBrowserSession(lock);
+            });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             cachedSessionState = await readSessionFromKeychain(this.username) ?? undefined;
             continue;
@@ -546,7 +1010,7 @@ export class BrowserSession {
       try {
         await page.goto(warmupUrl, { waitUntil: 'networkidle', timeout: 30000 });
         if (isSsoLoginUrl(page.url())) {
-          throw new Error(`SESSION_REDIRECT:${page.url()}`);
+          throw sessionRedirectError(page.url());
         }
       } finally {
         await page.close();
@@ -571,7 +1035,7 @@ export class BrowserSession {
       try {
         await warmupPage.goto(warmupUrl, { waitUntil: 'networkidle', timeout: 30000 });
         if (isSsoLoginUrl(warmupPage.url())) {
-          throw new Error(`SESSION_REDIRECT:${warmupPage.url()}`);
+          throw sessionRedirectError(warmupPage.url());
         }
       } finally {
         await warmupPage.close();
@@ -581,7 +1045,7 @@ export class BrowserSession {
       try {
         await page.goto(viewerUrl, { waitUntil: 'networkidle', timeout: 30000 });
         if (isSsoLoginUrl(page.url())) {
-          throw new Error(`SESSION_REDIRECT:${page.url()}`);
+          throw sessionRedirectError(page.url());
         }
         await page.waitForFunction(() => {
           const canvas = document.querySelector('canvas') as HTMLCanvasElement | null;
@@ -633,7 +1097,7 @@ export class BrowserSession {
       const page = await context.newPage();
       await page.goto(`${BASE_URL}/courses/${courseId}/assignments/${assignmentId}`, { waitUntil: 'networkidle', timeout: 30000 });
       if (isSsoLoginUrl(page.url())) {
-        throw new Error(`SESSION_REDIRECT:${page.url()}`);
+          throw sessionRedirectError(page.url());
       }
 
       const submitLink = page.locator('.submit_assignment_link').first();
@@ -710,14 +1174,14 @@ export class BrowserSession {
         const recordMediaCandidate = (label: string, url: string): void => {
           if (!isTrackedBrowserUrl(url)) return;
           if (!matchesLikelyMediaUrl(url)) return;
-          trackRecent(mediaCandidates, `${label} ${url}`);
+          trackRecent(mediaCandidates, `${label} ${redactBrowserUrl(url)}`);
         };
 
         page.on('request', (request: Request) => {
           const url = request.url();
           if (!isTrackedBrowserUrl(url)) return;
           const resourceType = request.resourceType();
-          trackRecent(recentRequests, `${request.method()} ${resourceType} ${url}`);
+          trackRecent(recentRequests, `${request.method()} ${resourceType} ${redactBrowserUrl(url)}`);
           recordMediaCandidate(`[request:${resourceType}]`, url);
         });
         page.on('response', (response: Response) => {
@@ -725,7 +1189,7 @@ export class BrowserSession {
           if (!isTrackedBrowserUrl(url)) return;
           const resourceType = response.request().resourceType();
           const contentType = response.headers()['content-type'] ?? '';
-          trackRecent(recentResponses, `${response.status()} ${resourceType} ${contentType || '(no content-type)'} ${url}`);
+          trackRecent(recentResponses, `${response.status()} ${resourceType} ${contentType || '(no content-type)'} ${redactBrowserUrl(url)}`);
           recordMediaCandidate(`[response:${resourceType}:${contentType || 'unknown'}]`, url);
           if (capturedFileUrl) return;
           if (isDownloadableResponse(response)) {
@@ -735,14 +1199,14 @@ export class BrowserSession {
         page.on('framenavigated', (frame: Frame) => {
           const frameUrl = frame.url();
           if (!frameUrl || !isTrackedBrowserUrl(frameUrl)) return;
-          trackRecent(recentFrames, frameUrl);
+          trackRecent(recentFrames, redactBrowserUrl(frameUrl));
         });
         context.on('page', (spawnedPage: Page) => {
           spawnedPage.on('request', (request: Request) => {
             const url = request.url();
             if (!isTrackedBrowserUrl(url)) return;
             const resourceType = request.resourceType();
-            trackRecent(recentRequests, `${request.method()} ${resourceType} ${url}`);
+            trackRecent(recentRequests, `${request.method()} ${resourceType} ${redactBrowserUrl(url)}`);
             recordMediaCandidate(`[popup-request:${resourceType}]`, url);
           });
           spawnedPage.on('response', (response: Response) => {
@@ -750,7 +1214,7 @@ export class BrowserSession {
             if (!isTrackedBrowserUrl(url)) return;
             const resourceType = response.request().resourceType();
             const contentType = response.headers()['content-type'] ?? '';
-            trackRecent(recentResponses, `${response.status()} ${resourceType} ${contentType || '(no content-type)'} ${url}`);
+            trackRecent(recentResponses, `${response.status()} ${resourceType} ${contentType || '(no content-type)'} ${redactBrowserUrl(url)}`);
             recordMediaCandidate(`[popup-response:${resourceType}:${contentType || 'unknown'}]`, url);
             if (!capturedFileUrl && isDownloadableResponse(response)) {
               capturedFileUrl = url;
@@ -759,14 +1223,14 @@ export class BrowserSession {
           spawnedPage.on('framenavigated', (frame: Frame) => {
             const frameUrl = frame.url();
             if (!frameUrl || !isTrackedBrowserUrl(frameUrl)) return;
-            trackRecent(recentFrames, frameUrl);
+            trackRecent(recentFrames, redactBrowserUrl(frameUrl));
           });
         });
 
         debugLog('browser-session', 'Navigating to OCS viewer');
         await page.goto(viewUrl, { waitUntil: 'networkidle', timeout: 30000 });
         if (isSsoLoginUrl(page.url())) {
-          throw new Error(`SESSION_REDIRECT:${page.url()}`);
+          throw sessionRedirectError(page.url());
         }
 
         if (!capturedFileUrl) {
@@ -794,14 +1258,14 @@ export class BrowserSession {
           throw new Error(buildOcsCaptureFailureMessage({
             resourceId: resourceId,
             displayName: displayName,
-            finalPageUrl: page.url(),
+            finalPageUrl: redactBrowserUrl(page.url()),
             pageTitle,
             recentFrames,
             recentRequests,
             recentResponses,
             mediaCandidates,
-            videoSources: domSnapshot.videoSources,
-            iframeSources: domSnapshot.iframeSources,
+            videoSources: domSnapshot.videoSources.map((url) => redactBrowserUrl(url, page.url())),
+            iframeSources: domSnapshot.iframeSources.map((url) => redactBrowserUrl(url, page.url())),
           }));
         }
 
@@ -820,7 +1284,7 @@ export class BrowserSession {
       const ltiUrl = `${BASE_URL}/courses/${courseId}/external_tools/3`;
       await page.goto(ltiUrl, { waitUntil: 'networkidle', timeout: 30000 });
       if (isSsoLoginUrl(page.url())) {
-        throw new Error(`SESSION_REDIRECT:${page.url()}`);
+        throw sessionRedirectError(page.url());
       }
 
       throw new Error(`Resource ${resourceId} has no viewUrl — cannot download without OCS viewer URL`);
@@ -849,7 +1313,7 @@ export class BrowserSession {
       const ltiUrl = `${BASE_URL}/courses/${courseId}/external_tools/211`;
       await page.goto(ltiUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
       if (isSsoLoginUrl(page.url())) {
-        throw new Error(`SESSION_REDIRECT:${page.url()}`);
+        throw sessionRedirectError(page.url());
       }
 
       const modulesResponse = await modulesPromise;
@@ -872,7 +1336,7 @@ export class BrowserSession {
     try {
       return await this.courseResourceApiFetcher(client, courseId, this.username);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = redactBrowserDiagnostic(err instanceof Error ? err.message : String(err));
       debugLog('browser-session', `courseresource API path failed; falling back to Playwright: ${message}`);
     }
 
@@ -889,12 +1353,12 @@ export class BrowserSession {
 
       const recordRequest = (url: string): void => {
         if (!isTrackedBrowserUrl(url)) return;
-        trackRecent(recentRequestUrls, url);
+        trackRecent(recentRequestUrls, redactBrowserUrl(url));
       };
 
       const recordResponse = (url: string, status: number): void => {
         if (!isTrackedBrowserUrl(url)) return;
-        trackRecent(recentResponseUrls, `${status} ${url}`);
+        trackRecent(recentResponseUrls, `${status} ${redactBrowserUrl(url)}`);
       };
 
       page.on('request', (request: Request) => {
@@ -907,11 +1371,11 @@ export class BrowserSession {
         const frameUrl = frame.url();
         if (!frameUrl) return;
         if (!isTrackedBrowserUrl(frameUrl)) return;
-        trackRecent(recentFrameUrls, frameUrl);
+        trackRecent(recentFrameUrls, redactBrowserUrl(frameUrl));
       });
       context.on('page', (spawnedPage: Page) => {
         const initialUrl = spawnedPage.url();
-        if (initialUrl) trackRecent(spawnedPageUrls, initialUrl);
+        if (initialUrl) trackRecent(spawnedPageUrls, redactBrowserUrl(initialUrl));
         spawnedPage.on('request', (request: Request) => {
           recordRequest(request.url());
         });
@@ -922,8 +1386,9 @@ export class BrowserSession {
           const frameUrl = frame.url();
           if (!frameUrl) return;
           if (!isTrackedBrowserUrl(frameUrl)) return;
-          trackRecent(recentFrameUrls, frameUrl);
-          trackRecent(spawnedPageUrls, frameUrl);
+          const safeFrameUrl = redactBrowserUrl(frameUrl);
+          trackRecent(recentFrameUrls, safeFrameUrl);
+          trackRecent(spawnedPageUrls, safeFrameUrl);
         });
       });
 
@@ -937,25 +1402,25 @@ export class BrowserSession {
 
       await page.goto(ltiUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
       if (isSsoLoginUrl(page.url())) {
-        throw new Error(`SESSION_REDIRECT:${page.url()}`);
+        throw sessionRedirectError(page.url());
       }
 
       let resourcesResponse;
       try {
         resourcesResponse = await resourcesPromise;
       } catch (err) {
-        const pageUrl = page.url();
+        const pageUrl = redactBrowserUrl(page.url());
         const title = await page.title().catch(() => '');
-        const popupSummary = spawnedPageUrls.length > 0 ? spawnedPageUrls.join(' | ') : 'none';
-        const frameSummary = recentFrameUrls.length > 0 ? recentFrameUrls.join(' | ') : 'none';
-        const requestSummary = recentRequestUrls.length > 0 ? recentRequestUrls.join(' | ') : 'none';
-        const responseSummary = recentResponseUrls.length > 0 ? recentResponseUrls.join(' | ') : 'none';
+        const popupSummary = summarizeRecent(spawnedPageUrls);
+        const frameSummary = summarizeRecent(recentFrameUrls);
+        const requestSummary = summarizeRecent(recentRequestUrls);
+        const responseSummary = summarizeRecent(recentResponseUrls);
         debugLog('browser-session', `courseresource timeout: page=${pageUrl} title=${title}`);
         debugLog('browser-session', `courseresource timeout recent frames: ${frameSummary}`);
         debugLog('browser-session', `courseresource timeout recent requests: ${requestSummary}`);
         debugLog('browser-session', `courseresource timeout recent responses: ${responseSummary}`);
         debugLog('browser-session', `courseresource timeout spawned pages: ${popupSummary}`);
-        const message = err instanceof Error ? err.message : String(err);
+        const message = redactBrowserDiagnostic(err instanceof Error ? err.message : String(err));
         throw new Error(
           `${message}\n` +
           `  final page: ${pageUrl}\n` +

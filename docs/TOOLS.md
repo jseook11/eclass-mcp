@@ -376,7 +376,7 @@ MCP 서버 로컬 캐시의 다운로드 기록 원본 목록. 파일 본문은 
 - **새 파일 자료 받기**: `eclass_get_courses_cached` → course_id 선택 → `eclass_get_materials` → 동영상이 아닌 `is_downloaded: false` 항목들을 `eclass_download_materials_batch`에 한 번에 넘김 (각 material의 `source`도 같이 넘기면 검색에 활용됨).
 - **동영상 받기**: `eclass_get_materials`에서 `type`이 mp4/video 계열이고 `url`이 `https://ocs.cau.ac.kr/em/...`인 항목 선택 → `eclass_download_video`.
 - **마감 임박 과제 확인**: `eclass_get_assignments { days_ahead: 7, include_submitted: false }`.
-- **문제 진단**: 툴 오류 발생 → `eclass_doctor` → 실패 check의 detail로 원인 판단 (인증이면 `npm run setup` 재실행 안내).
+- **문제 진단**: 툴 오류 발생 → `eclass_doctor` → 실패 check의 detail로 원인 판단 (인증이면 `pnpm run setup` 재실행 안내).
 - **성적 확인**: `eclass_get_grades`(전체) 또는 `eclass_get_grades { course_id }`(특정 강의 + 과제별 점수).
 - **과제 제출 준비**: `eclass_get_assignments`로 대상 과제 파악 → `eclass_get_assignment_detail`로 `submission_types`/`allowed_extensions`/마감 확인 → `eclass_submit_assignment`를 먼저 `dry_run: true`로 호출.
 - **강의 백업/요약**: `eclass_export_course_snapshot { course_id, format: 'markdown', output_path }`.
@@ -390,12 +390,12 @@ MCP 서버 로컬 캐시의 다운로드 기록 원본 목록. 파일 본문은 
 | `ECLASS_DB_PATH` | `~/.eclass-mcp/files.db` | 다운로드/강의 캐시 DB |
 | `ECLASS_HANDOFF_MAX_BYTES` | `26214400` | `eclass_file_handoff`가 URL handoff를 허용할 파일의 최대 크기(바이트). 기본 25MB |
 | `ECLASS_HANDOFF_BASE_URL` | `http://127.0.0.1:<port>` | URL 모드(HTTP transport) handoff 링크의 base. 헤드리스/원격 호스트에서 사용자가 도달 가능한 주소로 덮어쓴다 |
-| `ECLASS_CREDENTIAL_BACKEND` | auto | `encrypted` / `keytar` / `file` 강제. auto는 마스터 키 있으면 encrypted, 아니면 keytar, 둘 다 없으면 file |
+| `ECLASS_CREDENTIAL_BACKEND` | auto | `encrypted` / `keytar` 강제, `file`은 legacy read-only. auto는 encrypted → keytar 순서이며 둘 다 없으면 실패 |
 | `ECLASS_SECRET_KEY` | (없음) | 암호화 백엔드 마스터 키(32바이트 base64). 헤드리스 서버 실행 시 주입 |
 | `ECLASS_SECRET_KEY_FILE` | (없음) | 마스터 키 파일 경로(raw 32바이트 또는 base64 텍스트) |
 | `ECLASS_ENC_STORE_PATH` | `~/.eclass-mcp/secrets.enc` | 암호화 비밀번호 파일 경로 |
-| `ALLOW_PLAINTEXT_ENV_SECRETS` | 꺼짐 | `1`일 때만 `ECLASS_PASSWORD` env 허용 |
-| `CONTROL_PLANE_API_KEY` | — | OpenAI tunnel 런타임 API 키 (Tunnels Read+Use). `npm run chatgptui`에서 사용 |
+| `ALLOW_PLAINTEXT_ENV_SECRETS` | 꺼짐 | `1`일 때만 `ECLASS_PASSWORD` env 허용. Canvas token/session용 keytar/encrypted backend는 별도 필수 |
+| `CONTROL_PLANE_API_KEY` | — | OpenAI tunnel 런타임 API 키 (Tunnels Read+Use). `pnpm run chatgptui`에서 사용 |
 | `CONTROL_PLANE_TUNNEL_ID` | — | tunnel 식별자 (Platform Tunnels 발급) |
 | `ECLASS_TUNNEL_PROFILE_FILE` | `${XDG_CONFIG_HOME:-~/.config}/tunnel-client/eclass-mcp.yaml` | tunnel-client 프로파일 경로 오버라이드 |
 | `DEBUG` | 꺼짐 | `1`이면 stderr 디버그 로그 |

@@ -14,6 +14,7 @@
     "url": "https://github.com/jseook11/eclass-mcp/issues"
   },
   "homepage": "https://github.com/jseook11/eclass-mcp#readme",
+  "packageManager": "pnpm@11.6.0",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -43,8 +44,8 @@
     "doctor": "tsx scripts/doctor.ts",
     "install:skill": "node scripts/install-skill.mjs",
     "discover": "tsx scripts/discover.ts",
-    "install:browser": "npx playwright install chromium",
-    "postinstall": "npm rebuild better-sqlite3 && npx playwright install chromium"
+    "install:browser": "playwright install chromium",
+    "postinstall": "pnpm rebuild better-sqlite3 && playwright install chromium"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",

@@ -5,12 +5,15 @@ import { inspect } from 'node:util';
 
 import { BrowserSession } from './browser-session.js';
 import { getEclassPassword, KEYCHAIN_SERVICE } from './secrets.js';
-import { describeCredentialEnvironment, getCredential } from './credential-store.js';
+import {
+  describeCredentialEnvironment,
+  getCredential,
+  type CredentialDiagnostics,
+} from './credential-store.js';
 import {
   defaultHermesConfigPath,
-  defaultMcpJsonPath,
   readHermesCredentialEnv,
-  readMcpJsonCredentialEnv,
+  readProjectMcpJsonCredentialEnv,
 } from './mcp-config.js';
 import { getCourses } from './tools/get-courses.js';
 import { sanitizeDebug } from './errors.js';
@@ -35,6 +38,12 @@ export interface CheckResult {
   name: string;
   ok: boolean;
   detail: string;
+}
+
+function formatCredentialDiagnostics(diag: CredentialDiagnostics): string {
+  return `backend=${diag.backend} (${diag.reason}), keytar=${diag.keytarLoaded ? 'loaded' : 'unavailable'}` +
+    `${diag.keytarError ? `(${diag.keytarError})` : ''}, masterKey=${diag.masterKeyPresent ? 'yes' : 'no'}` +
+    `, dbus=${diag.dbusSession ? 'yes' : 'no'}`;
 }
 
 async function checkPlaywright(): Promise<CheckResult> {
@@ -106,14 +115,49 @@ async function checkEclassCourseresource(session: BrowserSession): Promise<Check
 
 export async function credentialBackendCheck(username: string): Promise<CheckResult> {
   const diag = await describeCredentialEnvironment();
-  const found = (await getCredential(KEYCHAIN_SERVICE, username)) !== null;
-  const base =
-    `backend=${diag.backend} (${diag.reason}), keytar=${diag.keytarLoaded ? 'loaded' : 'unavailable'}` +
-    `${diag.keytarError ? `(${diag.keytarError})` : ''}, masterKey=${diag.masterKeyPresent ? 'yes' : 'no'}` +
-    `, dbus=${diag.dbusSession ? 'yes' : 'no'}`;
+  const base = formatCredentialDiagnostics(diag);
+  let found = false;
+  try {
+    found = (await getCredential(KEYCHAIN_SERVICE, username)) !== null;
+  } catch (err) {
+    return {
+      name: 'credential backend',
+      ok: false,
+      detail: `${base}, credential lookup failed: ${formatErrorDetail(err)}`,
+    };
+  }
   return found
     ? { name: 'credential backend', ok: true, detail: `${base}, credential: found` }
     : { name: 'credential backend', ok: false, detail: `${base}, credential: not found for ${username}` };
+}
+
+export async function credentialCacheBackendCheck(): Promise<CheckResult> {
+  const diag = await describeCredentialEnvironment();
+  const base = formatCredentialDiagnostics(diag);
+  const secureWritableClass = diag.backend === 'encrypted' || diag.backend === 'keytar';
+  if (!secureWritableClass) {
+    return {
+      name: 'credential backend',
+      ok: false,
+      detail: `${base}, explicit plaintext password override still requires encrypted or keytar storage for Canvas token/session cache`,
+    };
+  }
+  try {
+    // A missing random account is a successful read. This detects a locked
+    // keychain, wrong encrypted key, corrupt store, and unsafe file before login.
+    await getCredential(KEYCHAIN_SERVICE, '__doctor_cache_backend_probe__');
+  } catch (err) {
+    return {
+      name: 'credential backend',
+      ok: false,
+      detail: `${base}, secure Canvas token/session cache read failed: ${formatErrorDetail(err)}`,
+    };
+  }
+  return {
+    name: 'credential backend',
+    ok: true,
+    detail: `${base}, explicit plaintext password override active; secure Canvas token/session cache backend readable`,
+  };
 }
 
 export type DoctorOptions = {
@@ -164,8 +208,8 @@ export async function resolveDoctorCredentials(
     };
   }
 
-  const mcpJsonPath = options.mcpJsonPath ?? defaultMcpJsonPath(path.resolve(__dirname, '..'));
-  const mcpJsonEnv = await readMcpJsonCredentialEnv(mcpJsonPath);
+  const projectRoot = path.resolve(__dirname, '..');
+  const mcpJsonEnv = await readProjectMcpJsonCredentialEnv(projectRoot, options.mcpJsonPath);
   if (mcpJsonEnv?.username) {
     return {
       username: mcpJsonEnv.username,
@@ -214,7 +258,13 @@ export async function runDoctor(
     return results;
   }
 
-  results.push(await credentialBackendCheck(resolvedUsername));
+  const plaintextOverrideEnabled =
+    credentials.plaintextOverride === '1' || credentials.plaintextOverride?.toLowerCase() === 'true';
+  if (plaintextOverrideEnabled && credentials.envPassword?.trim()) {
+    results.push(await credentialCacheBackendCheck());
+  } else {
+    results.push(await credentialBackendCheck(resolvedUsername));
+  }
 
   const credentialFactory = (): Promise<string> => getEclassPassword(
     resolvedUsername,
