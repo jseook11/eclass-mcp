@@ -324,7 +324,9 @@ export function isSsoLoginUrl(rawUrl: string): boolean {
     const url = new URL(rawUrl);
     return (
       (url.hostname === 'canvas.cau.ac.kr' && url.pathname.startsWith('/xn-sso/')) ||
-      (url.hostname === 'eclass3.cau.ac.kr' && url.pathname === '/login')
+      (url.hostname === 'eclass3.cau.ac.kr' && url.pathname === '/login') ||
+      (url.hostname === 'mportal2.cau.ac.kr' &&
+        url.pathname === '/common/auth/newSsoLogin.do')
     );
   } catch {
     return false;

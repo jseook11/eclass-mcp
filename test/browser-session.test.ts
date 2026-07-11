@@ -6,12 +6,32 @@ import {
   buildCanvasTokenCompensationRetentionError,
   buildCanvasTokenRecoveryManualCleanupError,
   buildOcsCaptureFailureMessage,
+  isSsoLoginUrl,
   listCanvasTokensFromAuthenticatedPage,
   parseCachedSessionCredential,
   redactBrowserDiagnostic,
   revokeCanvasTokenFromAuthenticatedPage,
 } from '../src/browser-session.js';
 import { CANVAS_JSON_ACCEPT } from '../src/canvas-token-lifecycle.js';
+
+test('SSO login URL detection includes the mportal authentication boundary', () => {
+  assert.equal(
+    isSsoLoginUrl('https://mportal2.cau.ac.kr/common/auth/newSsoLogin.do'),
+    true,
+  );
+  assert.equal(
+    isSsoLoginUrl('https://mportal2.cau.ac.kr/common/auth/newSsoLogin.do?returnUrl=%2Fstd'),
+    true,
+  );
+  assert.equal(
+    isSsoLoginUrl('https://mportal2.cau.ac.kr/common/auth/newSsoLogin.do/extra'),
+    false,
+  );
+  assert.equal(
+    isSsoLoginUrl('https://example.com/common/auth/newSsoLogin.do'),
+    false,
+  );
+});
 
 test('browser token recovery list/revoke calls are bounded and same-origin', async () => {
   const baseUrl = 'https://eclass3.cau.ac.kr';
