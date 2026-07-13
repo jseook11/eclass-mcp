@@ -6,6 +6,7 @@ import {
   buildCanvasTokenCompensationRetentionError,
   buildCanvasTokenRecoveryManualCleanupError,
   buildOcsCaptureFailureMessage,
+  createCanvasTokenFromAuthenticatedPage,
   isSsoLoginUrl,
   listCanvasTokensFromAuthenticatedPage,
   parseCachedSessionCredential,
@@ -13,6 +14,86 @@ import {
   revokeCanvasTokenFromAuthenticatedPage,
 } from '../src/browser-session.js';
 import { CANVAS_JSON_ACCEPT } from '../src/canvas-token-lifecycle.js';
+
+test('browser token creation submits relative and absolute CAU profile form actions', async () => {
+  const baseUrl = 'https://eclass3.cau.ac.kr';
+  let formAction = `${baseUrl}/profile/tokens`;
+  const runtime = globalThis as unknown as Record<string, unknown>;
+  const previousWindow = runtime.window;
+  const previousDocument = runtime.document;
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ input: string; init: RequestInit | undefined }> = [];
+  const tokenForm = {
+    get action() {
+      return new URL(formAction, baseUrl).toString();
+    },
+    getAttribute: (name: string) => name === 'action' ? formAction : null,
+    querySelector: (selector: string) =>
+      selector === 'input[name="authenticity_token"]'
+        ? { value: 'rails-authenticity-token' }
+        : null,
+  };
+  runtime.window = { location: { origin: baseUrl, href: `${baseUrl}/profile/settings` } };
+  runtime.document = {
+    querySelector: (selector: string) =>
+      selector === 'form[action$="/profile/tokens"]' ? tokenForm : null,
+  };
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ input: String(input), init });
+    return {
+      ok: true,
+      status: 200,
+      url: new URL(String(input), baseUrl).toString(),
+      text: async () => JSON.stringify({ id: 'new-id', token: 'new-secret' }),
+    } as Response;
+  }) as typeof fetch;
+  const page = {
+    url: () => `${baseUrl}/profile/settings`,
+    evaluate: async (fn: (arg: unknown) => unknown, arg: unknown) => fn(arg),
+  } as unknown as Page;
+
+  try {
+    const result = await createCanvasTokenFromAuthenticatedPage(
+      page,
+      '2026-10-11T00:00:00.000Z',
+      'eclass-mcp test purpose',
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].input, formAction);
+    assert.equal(calls[0].init?.method, 'POST');
+    assert.equal(calls[0].init?.credentials, 'same-origin');
+    assert.equal(calls[0].init?.redirect, 'error');
+    assert.equal(
+      new Headers(calls[0].init?.headers).get('Content-Type'),
+      'application/x-www-form-urlencoded;charset=UTF-8',
+    );
+    assert.deepEqual(
+      Object.fromEntries(new URLSearchParams(String(calls[0].init?.body))),
+      {
+        authenticity_token: 'rails-authenticity-token',
+        'access_token[purpose]': 'eclass-mcp test purpose',
+        'access_token[expires_at]': '2026-10-11T00:00:00.000Z',
+      },
+    );
+
+    formAction = '/profile/tokens';
+    await createCanvasTokenFromAuthenticatedPage(
+      page,
+      '2026-10-12T00:00:00.000Z',
+      'eclass-mcp relative action',
+    );
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].input, `${baseUrl}/profile/tokens`);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousWindow === undefined) delete runtime.window;
+    else runtime.window = previousWindow;
+    if (previousDocument === undefined) delete runtime.document;
+    else runtime.document = previousDocument;
+  }
+});
 
 test('SSO login URL detection includes the mportal authentication boundary', () => {
   assert.equal(

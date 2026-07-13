@@ -187,7 +187,7 @@ function isSameOriginCanvasResponse(responseUrl: string): boolean {
   }
 }
 
-async function createCanvasTokenFromAuthenticatedPage(
+export async function createCanvasTokenFromAuthenticatedPage(
   page: Page,
   requestedExpiresAt: string,
   purpose: string,
@@ -200,17 +200,35 @@ async function createCanvasTokenFromAuthenticatedPage(
     if (window.location.origin !== baseUrl) {
       throw new Error('Canvas token creation page changed origin');
     }
-    const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement | null)?.content;
+    const tokenForm = document.querySelector<HTMLFormElement>(
+      'form[action$="/profile/tokens"]',
+    );
+    if (!tokenForm) {
+      throw new Error('Canvas token creation form was not found');
+    }
+    const authenticityToken = tokenForm
+      .querySelector<HTMLInputElement>('input[name="authenticity_token"]')
+      ?.value.trim();
+    if (!authenticityToken) {
+      throw new Error('Canvas token creation form did not include an authenticity token');
+    }
+    const actionUrl = new URL(
+      tokenForm.getAttribute('action') ?? tokenForm.action,
+      window.location.href,
+    );
+    if (actionUrl.origin !== baseUrl || actionUrl.pathname !== '/profile/tokens') {
+      throw new Error('Canvas token creation form action was not same-origin');
+    }
     const headers: Record<string, string> = {
       Accept: acceptHeader,
       'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
     };
-    if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
 
     const form = new URLSearchParams();
-    form.set('token[purpose]', tokenPurpose);
-    form.set('token[expires_at]', expiresAt);
-    const response = await fetch('/api/v1/users/self/tokens', {
+    form.set('authenticity_token', authenticityToken);
+    form.set('access_token[purpose]', tokenPurpose);
+    form.set('access_token[expires_at]', expiresAt);
+    const response = await fetch(actionUrl.toString(), {
       method: 'POST',
       credentials: 'same-origin',
       redirect: 'error',
