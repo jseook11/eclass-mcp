@@ -8,13 +8,13 @@ import Database from 'better-sqlite3';
 import { searchDownloads } from '../src/tools/search-downloads.js';
 import type { DownloadRecord } from '../src/file-cache.js';
 
-function withTempDb<T>(fn: (dbPath: string) => T): T {
+async function withTempDb<T>(fn: (dbPath: string) => Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cache-'));
   const dbPath = path.join(dir, 'files.db');
   const prev = process.env.ECLASS_DB_PATH;
   process.env.ECLASS_DB_PATH = dbPath;
   try {
-    return fn(dbPath);
+    return await fn(dbPath);
   } finally {
     if (prev === undefined) delete process.env.ECLASS_DB_PATH;
     else process.env.ECLASS_DB_PATH = prev;
@@ -35,6 +35,8 @@ test('FileCache migrates an old downloaded_files table by adding source column',
     `);
     legacy.prepare('INSERT INTO downloaded_files VALUES (?,?,?,?,?,?)')
       .run('old1', 1, 'legacy.pdf', '/tmp/legacy.pdf', '2026-01-01T00:00:00.000Z', 10);
+    legacy.prepare('INSERT INTO cached_courses VALUES (?,?,?)')
+      .run(1, '이전 학기 강의', '2026-01-01T00:00:00.000Z');
     legacy.close();
 
     // Importing FileCache fresh and constructing it should run the migration
@@ -43,6 +45,8 @@ test('FileCache migrates an old downloaded_files table by adding source column',
 
     const cols = (cache.getDb().prepare('PRAGMA table_info(downloaded_files)').all() as Array<{ name: string }>).map((c) => c.name);
     assert.ok(cols.includes('source'));
+    const courseCols = (cache.getDb().prepare('PRAGMA table_info(cached_courses)').all() as Array<{ name: string }>).map((c) => c.name);
+    assert.ok(courseCols.includes('is_current'));
 
     // Old row survives with null source; new row can store a source
     const old = cache.get('old1');
@@ -50,6 +54,30 @@ test('FileCache migrates an old downloaded_files table by adding source column',
 
     cache.record({ file_id: 'new1', course_id: 1, display_name: 'new.pdf', local_path: '/tmp/new.pdf', downloaded_at: '2026-02-01T00:00:00.000Z', size_bytes: 20, source: 'files' });
     assert.equal(cache.get('new1')?.source, 'files');
+
+    // Legacy rows stay in the catalog for old download labels, but force one
+    // live refresh before they can be presented as the current semester.
+    assert.deepEqual(cache.listCachedCourses(), []);
+    assert.equal(cache.listCourseCatalog()[0]?.name, '이전 학기 강의');
+
+    cache.replaceCurrentCourses([
+      { id: 2, name: '현재 강의 A' },
+      { id: 3, name: '현재 강의 B' },
+    ], '2026-08-26T00:00:00.000Z');
+    assert.deepEqual(cache.listCachedCourses().map((course) => course.course_id), [2, 3]);
+
+    cache.replaceCurrentCourses([
+      { id: 3, name: '현재 강의 B (수정)' },
+      { id: 4, name: '현재 강의 C' },
+    ], '2026-08-27T00:00:00.000Z');
+    assert.deepEqual(cache.listCachedCourses().map((course) => course.course_id), [3, 4]);
+    assert.equal(cache.getCachedCourse(1)?.name, '이전 학기 강의');
+    assert.deepEqual(cache.listCourseCatalog().map((course) => course.course_id), [1, 2, 3, 4]);
+
+    cache.replaceCurrentCourses([], '2026-08-28T00:00:00.000Z');
+    assert.deepEqual(cache.listCachedCourses(), []);
+    assert.equal(cache.listCourseCatalog().length, 4);
+    cache.getDb().close();
   });
 });
 

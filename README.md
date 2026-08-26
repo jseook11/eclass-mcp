@@ -66,7 +66,7 @@ MCP 클라이언트에서 자연어로 요청하면 서버가 필요한 도구�
 
 | 영역 | 할 수 있는 것 | 핵심 도구 |
 |---|---|---|
-| 강의 | 수강 목록 조회 (로컬 캐시 우선) | `eclass_get_courses`, `eclass_get_courses_cached` |
+| 강의 | 이번 학기 교과목 조회(로컬 스냅샷 우선), 이전 학기·예방교육 분리 조회 | `eclass_get_courses`, `eclass_get_courses_cached` |
 | 과제 | 마감 임박 과제·퀴즈 조회, 상세(제출 유형/확장자/마감) 확인 | `eclass_get_assignments`, `eclass_get_assignment_detail` |
 | 과제 제출 | 파일/텍스트 제출 (기본 `dry_run`, 이중 제출 방지 검증) | `eclass_submit_assignment` |
 | 성적 | 강의 단위 + 과제별 점수 | `eclass_get_grades` |

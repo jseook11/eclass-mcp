@@ -84,7 +84,7 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Pro
 async function loadCourses(client: CanvasClient, fileCache: FileCache): Promise<Course[]> {
   const live = await bestEffort(async () => {
     const courses = await getCourses(client);
-    fileCache.upsertCourses(courses);
+    fileCache.replaceCurrentCourses(courses);
     return courses;
   }, []);
   if (live.length > 0) return live;
@@ -178,7 +178,7 @@ export async function searchEclassDocuments(
 
   const downloadMatches = searchDownloads(
     context.fileCache.list(),
-    context.fileCache.listCachedCourses(),
+    context.fileCache.listCourseCatalog(),
     { query, limit: 10 },
   ).matches;
   for (const record of downloadMatches) {

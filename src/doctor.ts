@@ -85,11 +85,13 @@ async function checkEclassAuth(session: BrowserSession): Promise<CheckResult> {
   }
 }
 
-async function checkEclassCoursesApi(session: BrowserSession): Promise<CheckResult> {
+export async function checkEclassCoursesApi(session: BrowserSession): Promise<CheckResult> {
   try {
     const client = await session.getClient();
-    const courses = await getCourses(client);
-    return { name: 'eclass courses API', ok: true, detail: `current courses: ${courses.length}` };
+    // Doctor verifies API/auth health, not whether the current academic term
+    // can be inferred from optional Canvas metadata.
+    const courses = await getCourses(client, { scope: 'all' });
+    return { name: 'eclass courses API', ok: true, detail: `active enrollments: ${courses.length}` };
   } catch (err) {
     const message = formatErrorDetail(err);
     return { name: 'eclass courses API', ok: false, detail: message };

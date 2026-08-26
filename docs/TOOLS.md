@@ -22,15 +22,21 @@ skill/하네스 작성 시 이 문서를 참조한다. 새 툴이 추가되면 �
 - 인증은 서버가 알아서 처리한다 (Keychain 토큰 캐시 → 만료 시 Playwright 자동 로그인). 호출 측에서 신경 쓸 것 없음.
   - 서버 측에서 토큰이 만료/회수되어 401이 돌아오면 캐시 토큰을 폐기하고 자동 재로그인 후 해당 요청을 1회 재시도한다.
 - 모든 HTTP 요청에 타임아웃이 걸려 있다 (API 30초, 파일 다운로드 5분, 동영상 다운로드 30분). eclass가 응답을 멈춰도 툴이 무한 대기하지 않는다.
-- `course_id`는 숫자. 강의명으로 찾으려면 먼저 강의 목록을 불러와서 LLM이 직접 매칭한다 (별도 검색 툴 없음 — 아래 "강의 찾기 흐름" 참조).
+- `course_id`는 숫자. Canvas가 문자열 ID를 반환해도 서버가 양의 안전 정수로 정규화한 뒤
+  응답·캐시에 기록한다. 강의명으로 찾으려면 먼저 강의 목록을 불러와서 LLM이 직접
+  매칭한다 (별도 검색 툴 없음 — 아래 "강의 찾기 흐름" 참조).
 - 첫 호출(로그인 필요 시)은 20초 이상 걸릴 수 있다. 이후는 토큰 캐시로 빠름.
 - 다운로드 파일명은 유니코드 인식 정규화를 거친다 — 한글 파일명이 그대로 보존된다 (위험 문자만 `_` 치환).
 - 시험 시간표 기능은 기존 다운로드 DB와 별도 DB를 사용한다. 기본 경로는 `~/.eclass-mcp/exams.db`이며 `ECLASS_EXAM_DB_PATH`로 바꿀 수 있다.
 
 ## 강의 찾기 흐름 (course_id 알아내기)
 
-1. `eclass_get_courses_cached` 호출 — 네트워크 없이 즉시 반환. 결과가 있으면 목록에서 LLM이 직접 이름을 보고 course_id 선택.
-2. 캐시가 비었거나 강의가 안 보이면 `eclass_get_courses` 호출 — eclass에서 현재 수강 목록을 가져오고 캐시도 갱신됨.
+1. `eclass_get_courses_cached` 호출 — 네트워크 없이 현재 학기 스냅샷을 즉시 반환. 결과가
+   있으면 목록에서 LLM이 직접 이름을 보고 course_id 선택.
+2. 캐시가 비었거나 강의가 안 보이면 `eclass_get_courses` 호출 — eclass에서 현재 학기
+   교과목을 가져와 캐시 스냅샷을 교체한다.
+3. 이전 학기·예방교육까지 확인해야 할 때만 각각 `scope: "all"`, `scope: "training"`으로
+   네트워크 목록을 조회한다. 이 보조 조회는 현재 학기 캐시를 덮어쓰지 않는다.
 
 ## 툴 목록
 
@@ -63,16 +69,27 @@ ChatGPT Company Knowledge / connector-like 호환용 표준 검색 도구. eclas
 
 ### eclass_get_courses
 
-수강 중인 강의 목록 (현재 학기 기준 필터링). 호출하면 강의 캐시도 갱신된다.
+수강 강의 목록. 기본값은 현재 학기 일반 교과목이며, 성공하면 현재 강의 캐시를 누적
+upsert가 아닌 최신 스냅샷으로 교체한다. 이전 강의 이름은 다운로드 기록 표시를 위한
+내부 catalog에 남지만 기본 캐시 목록에는 나오지 않는다.
 
-- 입력: 없음
+- 입력: `{ scope?: "current" | "all" | "training" = "current" }`
+  - `current`: `term.name`/term ID/시작·종료일과 `concluded`를 함께 사용해 선택한 이번 학기
+    교과목. term 시작 45일 전부터 다음 학기를 선택할 수 있다.
+  - `all`: Canvas의 `available`/`completed` workflow state에 있는 active enrollment 이력
+    (이전 학기·교육 포함).
+  - `training`: 학기 메타데이터와 무관하게 보수적인 예방/의무교육 제목 패턴에 해당하는
+    강의. 단순히 `교육`이나 `예방` 한 단어만으로 분류하지 않는다.
 - 출력: `[{ id: number, name: string }]`
+- `current` 학기를 판별할 근거가 없으면 과거처럼 전체 목록을 현재라고 반환하지 않고
+  `CURRENT_TERM_UNRESOLVED`로 실패한다. 이때 `scope: "all"`로 원본 범위를 확인한다.
 
 ### eclass_get_courses_cached
 
-로컬 캐시의 강의 목록. 네트워크 호출 없음. course_id ↔ 강의명 매핑용.
+로컬 캐시의 현재 학기 강의 스냅샷. 네트워크 호출 없음. course_id ↔ 강의명 매핑용.
 
-- 입력: `{ course_id?: number }` — 지정 시 해당 강의만
+- 입력: `{ course_id?: number }` — 생략 시 현재 스냅샷, 지정 시 과거 catalog까지 포함한
+  해당 강의 exact lookup
 - 출력: `[{ id, name, fetched_at }]`
 
 ### eclass_doctor

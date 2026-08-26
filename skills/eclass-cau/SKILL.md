@@ -16,7 +16,9 @@ description: 중앙대 eclass(LearningX/Canvas) 작업 — 강의·과제·성�
 - 선행 단계는 "툴을 반드시 호출"이 아니라 **"그 값을 확보한 상태"** 를 뜻한다.
   이번 세션에서 이미 신뢰할 수 있게 얻은 값(course_id 등)은 재호출 없이 재사용한다.
   course_id가 필요하면 `eclass_get_courses_cached`로 확보하되(비었으면
-  `eclass_get_courses`), 이미 알고 있으면 다시 부르지 않는다.
+  `eclass_get_courses`), 이미 알고 있으면 다시 부르지 않는다. 기본 목록은 현재 학기
+  일반 교과목이며, 이전 학기 전체는 `scope: "all"`, 예방/의무교육은
+  `scope: "training"`을 명시한다.
 - 단, **안전 게이트(아래)는 세션 컨텍스트와 무관하게 항상 수행한다.** "아까 확인했다"로
   생략하지 않는다.
 - 캐시가 학기 경계로 오래됐거나 다운로드 후 `is_downloaded`가 바뀌었을 만하면 다시 확인한다.

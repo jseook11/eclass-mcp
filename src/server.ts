@@ -60,7 +60,9 @@ export function createEclassServer({ username, session, fileCache, examCache, ha
   );
 
 // --- Tool schemas ---
-const GetCoursesSchema = z.object({});
+const GetCoursesSchema = z.object({
+  scope: z.enum(['current', 'all', 'training']).optional().default('current'),
+});
 const GetCachedCoursesSchema = z.object({
   course_id: z.number().int().positive().optional(),
 });
@@ -208,15 +210,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: buildToolList([
       {
         name: 'eclass_get_courses',
-        description: '[네트워크] 수강 중인 강의 목록을 e-Class에서 새로 가져오고 로컬 캐시를 갱신합니다. course_id ↔ 강의명 매핑이 목적이면 네트워크 없는 eclass_get_courses_cached를 먼저 사용하세요.',
+        description: '[네트워크] e-Class 강의 목록을 새로 가져옵니다. 기본 current는 term 이름/ID·날짜로 판별한 이번 학기 일반 교과목만 반환하고 현재 강의 캐시를 교체합니다. all은 Canvas의 available/completed active 수강 이력(이전 학기·교육 포함), training은 보수적으로 분류한 예방/의무교육만 반환합니다. 현재 학기를 판별할 수 없으면 전체를 현재라고 오인하지 않고 실패하므로 scope=all로 원본 범위를 확인하세요.',
         inputSchema: {
           type: 'object',
-          properties: {},
+          properties: {
+            scope: {
+              type: 'string',
+              enum: ['current', 'all', 'training'],
+              description: 'current(기본): 이번 학기 교과목, all: available/completed active 수강 이력, training: 예방/의무교육',
+              default: 'current',
+            },
+          },
         },
       },
       {
         name: 'eclass_get_courses_cached',
-        description: '[로컬] 캐시에 저장된 강의 목록을 조회합니다. 네트워크 호출 없이 course_id ↔ 강의명 매핑에 사용. 캐시가 비어 있거나 학기가 바뀐 경우에만 eclass_get_courses로 갱신하세요.',
+        description: '[로컬] 캐시의 현재 학기 강의 스냅샷을 조회합니다. 네트워크 호출 없이 course_id ↔ 강의명 매핑에 사용합니다. course_id를 지정한 exact lookup은 이전 학기 catalog도 찾습니다. 캐시가 비어 있거나 학기가 바뀐 경우 eclass_get_courses의 기본 current 조회로 갱신하세요.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -543,8 +552,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       switch (name) {
       case 'eclass_get_courses': {
         const client = await session.getClient();
-        const courses = await getCourses(client);
-        fileCache.upsertCourses(courses);
+        const parsed = GetCoursesSchema.parse(args ?? {});
+        const courses = await getCourses(client, { scope: parsed.scope });
+        if (parsed.scope === 'current') {
+          fileCache.replaceCurrentCourses(courses);
+        }
         return {
           content: [{ type: 'text', text: JSON.stringify(courses) }],
         };
@@ -695,7 +707,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'eclass_search_downloads': {
         const parsed = SearchDownloadsSchema.parse(args ?? {});
         const records = fileCache.list(parsed.course_id);
-        const cachedCourses = fileCache.listCachedCourses();
+        const cachedCourses = fileCache.listCourseCatalog();
         const result = searchDownloads(records, cachedCourses, parsed);
         return { content: [{ type: 'text', text: JSON.stringify({ ...result, handoff_note: LOCAL_FILE_HANDOFF_NOTE }) }] };
       }
@@ -824,7 +836,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const records = fileCache.list(parsed.course_id);
         const cachedCourses = parsed.course_id !== undefined
           ? (fileCache.getCachedCourse(parsed.course_id) ? [fileCache.getCachedCourse(parsed.course_id)!] : [])
-          : fileCache.listCachedCourses();
+          : fileCache.listCourseCatalog();
         const status = getDownloadStatus(records, cachedCourses, parsed.course_id);
         return { content: [{ type: 'text', text: JSON.stringify({ ...status, handoff_note: LOCAL_FILE_HANDOFF_NOTE }) }] };
       }

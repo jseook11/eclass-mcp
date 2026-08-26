@@ -42,7 +42,8 @@ export class FileCache {
       CREATE TABLE IF NOT EXISTS cached_courses (
         course_id   INTEGER PRIMARY KEY,
         name        TEXT NOT NULL,
-        fetched_at  TEXT NOT NULL
+        fetched_at  TEXT NOT NULL,
+        is_current  INTEGER NOT NULL DEFAULT 0
       )
     `);
 
@@ -50,6 +51,14 @@ export class FileCache {
     const columns = this.db.prepare(`PRAGMA table_info(downloaded_files)`).all() as Array<{ name: string }>;
     if (!columns.some((c) => c.name === 'source')) {
       this.db.exec(`ALTER TABLE downloaded_files ADD COLUMN source TEXT`);
+    }
+
+    // Migration: legacy catalog entries remain available for exact course-name
+    // lookups, but are not considered a current-semester snapshot until the
+    // next successful live refresh.
+    const courseColumns = this.db.prepare(`PRAGMA table_info(cached_courses)`).all() as Array<{ name: string }>;
+    if (!courseColumns.some((c) => c.name === 'is_current')) {
+      this.db.exec(`ALTER TABLE cached_courses ADD COLUMN is_current INTEGER NOT NULL DEFAULT 0`);
     }
   }
 
@@ -108,14 +117,32 @@ export class FileCache {
   }
 
   upsertCourses(courses: Array<{ id: number; name: string }>, fetchedAt: string = new Date().toISOString()): void {
-    const insert = this.db.prepare(`
-      INSERT OR REPLACE INTO cached_courses (course_id, name, fetched_at)
-      VALUES (?, ?, ?)
+    // Backward-compatible alias for callers that predate current-semester
+    // snapshots. A successful course-list fetch is authoritative, so omitted
+    // courses must stop appearing in listCachedCourses().
+    this.replaceCurrentCourses(courses, fetchedAt);
+  }
+
+  replaceCurrentCourses(courses: Array<{ id: number; name: string }>, fetchedAt: string = new Date().toISOString()): void {
+    const markHistorical = this.db.prepare(`
+      UPDATE cached_courses
+      SET is_current = 0
+      WHERE is_current <> 0
+    `);
+
+    const upsert = this.db.prepare(`
+      INSERT INTO cached_courses (course_id, name, fetched_at, is_current)
+      VALUES (?, ?, ?, 1)
+      ON CONFLICT(course_id) DO UPDATE SET
+        name = excluded.name,
+        fetched_at = excluded.fetched_at,
+        is_current = 1
     `);
 
     const tx = this.db.transaction((items: Array<{ id: number; name: string }>) => {
+      markHistorical.run();
       for (const course of items) {
-        insert.run(course.id, course.name, fetchedAt);
+        upsert.run(course.id, course.name, fetchedAt);
       }
     });
 
@@ -123,6 +150,12 @@ export class FileCache {
   }
 
   listCachedCourses(): CachedCourse[] {
+    return this.db
+      .prepare('SELECT course_id, name, fetched_at FROM cached_courses WHERE is_current = 1 ORDER BY name COLLATE NOCASE ASC')
+      .all() as CachedCourse[];
+  }
+
+  listCourseCatalog(): CachedCourse[] {
     return this.db
       .prepare('SELECT course_id, name, fetched_at FROM cached_courses ORDER BY name COLLATE NOCASE ASC')
       .all() as CachedCourse[];
