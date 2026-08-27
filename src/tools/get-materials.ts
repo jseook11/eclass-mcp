@@ -1,4 +1,4 @@
-import { CanvasClient } from '../canvas-client.js';
+import { CanvasApiError, CanvasClient, isCanvasPermissionDeniedError } from '../canvas-client.js';
 import { BrowserSession } from '../browser-session.js';
 import { FileCache } from '../file-cache.js';
 
@@ -63,6 +63,64 @@ interface RawFile {
   'content-type'?: string;
 }
 
+const FILES_PERMISSION_DENIAL_TTL_MS = 15 * 60 * 1000;
+const filesPermissionDenials = new Map<number, number>();
+
+function filesPermissionDeniedError(courseId: number, cached: boolean): CanvasApiError {
+  const suffix = cached
+    ? ' (Files API permission denial is cached temporarily)'
+    : ' (Files API permission denied)';
+  return new CanvasApiError(401, `/api/v1/courses/${courseId}/files`, true, `Canvas API error 401${suffix}`);
+}
+
+function readPersistedFilesDenial(courseId: number, cache?: FileCache): number | undefined {
+  if (!cache || typeof cache.getSourceAccessDenial !== 'function') return undefined;
+  try {
+    const denial = cache.getSourceAccessDenial(courseId, 'files');
+    if (!denial) return undefined;
+    const deniedUntil = Date.parse(denial.denied_until);
+    if (!Number.isFinite(deniedUntil)) return undefined;
+    if (deniedUntil <= Date.now()) {
+      cache.clearSourceAccessDenial(courseId, 'files');
+      return undefined;
+    }
+    return deniedUntil;
+  } catch {
+    return undefined;
+  }
+}
+
+function activeFilesDenial(courseId: number, cache?: FileCache): number | undefined {
+  const now = Date.now();
+  const inMemory = filesPermissionDenials.get(courseId);
+  if (inMemory !== undefined && inMemory <= now) filesPermissionDenials.delete(courseId);
+  const persisted = readPersistedFilesDenial(courseId, cache);
+  const current = Math.max(filesPermissionDenials.get(courseId) ?? 0, persisted ?? 0);
+  return current > now ? current : undefined;
+}
+
+function rememberFilesDenial(courseId: number, cache?: FileCache, reason = 'Files API permission denied'): void {
+  const deniedUntil = Date.now() + FILES_PERMISSION_DENIAL_TTL_MS;
+  filesPermissionDenials.set(courseId, deniedUntil);
+  if (!cache || typeof cache.setSourceAccessDenial !== 'function') return;
+  try {
+    cache.setSourceAccessDenial(courseId, 'files', new Date(deniedUntil).toISOString(), reason);
+  } catch {
+    // A best-effort persistent cache must not turn a source denial into a
+    // larger material lookup failure. The in-memory guard remains active.
+  }
+}
+
+function clearFilesDenial(courseId: number, cache?: FileCache): void {
+  filesPermissionDenials.delete(courseId);
+  if (!cache || typeof cache.clearSourceAccessDenial !== 'function') return;
+  try {
+    cache.clearSourceAccessDenial(courseId, 'files');
+  } catch {
+    // A stale denial will naturally expire; do not fail a successful fetch.
+  }
+}
+
 async function fetchModules(client: CanvasClient, courseId: number): Promise<Material[]> {
   const raw = await client.fetchAll<RawModule>(
     `/api/v1/courses/${courseId}/modules`,
@@ -86,18 +144,30 @@ async function fetchModules(client: CanvasClient, courseId: number): Promise<Mat
   return materials;
 }
 
-async function fetchFiles(client: CanvasClient, courseId: number): Promise<Material[]> {
-  const raw = await client.fetchAll<RawFile>(
-    `/api/v1/courses/${courseId}/files`,
-    { per_page: '100' },
-  );
-  return raw.map((file) => ({
-    id: String(file.id),
-    title: file.display_name,
-    type: file['content-type'] ?? 'file',
-    url: file.url,
-    source: 'files' as MaterialSource,
-  }));
+async function fetchFiles(client: CanvasClient, courseId: number, cache?: FileCache): Promise<Material[]> {
+  if (activeFilesDenial(courseId, cache) !== undefined) {
+    throw filesPermissionDeniedError(courseId, true);
+  }
+
+  try {
+    const raw = await client.fetchAll<RawFile>(
+      `/api/v1/courses/${courseId}/files`,
+      { per_page: '100' },
+    );
+    clearFilesDenial(courseId, cache);
+    return raw.map((file) => ({
+      id: String(file.id),
+      title: file.display_name,
+      type: file['content-type'] ?? 'file',
+      url: file.url,
+      source: 'files' as MaterialSource,
+    }));
+  } catch (err) {
+    if (isCanvasPermissionDeniedError(err)) {
+      rememberFilesDenial(courseId, cache, err.message);
+    }
+    throw err;
+  }
 }
 
 async function fetchCourseresource(session: BrowserSession, courseId: number): Promise<Material[]> {
@@ -196,10 +266,11 @@ function materialTask(
   client: CanvasClient,
   session: BrowserSession,
   courseId: number,
+  cache?: FileCache,
 ): Promise<Material[]> {
   switch (source) {
     case 'modules': return fetchModules(client, courseId);
-    case 'files': return fetchFiles(client, courseId);
+    case 'files': return fetchFiles(client, courseId, cache);
     case 'courseresource': return fetchCourseresource(session, courseId);
     case 'external': return fetchExternal(client, courseId);
     case 'modulebuilder': return fetchModulebuilder(session, courseId);
@@ -271,7 +342,7 @@ export async function getMaterials(
   }
 
   const settled = await Promise.allSettled(
-    requested.map((source) => materialTask(source, client, session, courseId)),
+    requested.map((source) => materialTask(source, client, session, courseId, cache)),
   );
 
   const materials: Material[] = [];

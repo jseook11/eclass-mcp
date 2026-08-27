@@ -279,7 +279,20 @@ MCP 서버 로컬 캐시에 다운로드된 파일 기록 검색. **네트워크
 강의 자료 목록/메타데이터 조회. 여러 source를 병렬 수집하며 일부 실패해도 성공분은 반환 (partial success). 파일 본문을 다운로드하거나 ChatGPT에 첨부하지 않는다.
 
 - 입력: `{ course_id: number, sources?: ('modules'|'files'|'courseresource'|'external'|'modulebuilder'|'announcements')[] }`
-  - sources 생략 시 전부 조회. `courseresource`는 LearningX HTTP/API를 먼저 시도하고 실패 시 Playwright 인터셉트로 폴백한다. `modulebuilder`는 아직 Playwright를 사용한다.
+  - 자료는 `modulebuilder`(주차학습), `courseresource`(강의자료실), `announcements`(공지 첨부),
+    `modules`/`external`(보조 링크), `files`(Canvas 기본 파일함)에 분산될 수 있다.
+    한 source에서 자료를 찾았어도 다른 source를 생략하지 않고 결과를 합친다.
+  - 권장 1차 조회: `sources: ['modulebuilder', 'courseresource', 'announcements', 'modules', 'external']`.
+    Canvas 기본 Files는 Files 탭이 노출되거나 사용자가 명시적으로 요청한 경우에만
+    2차로 `sources: ['files']`를 호출한다. 중앙대 학생 계정에서는 Files API가 교수
+    미사용/학생 권한 제한으로 401을 반환할 수 있다.
+  - `sources`를 생략하면 현재 구현상 모든 source를 병렬 조회하므로 `files`도 포함된다.
+    Files 401을 피하려면 호출자가 권장 1차 source를 명시한다.
+  - `files`의 401은 토큰 만료가 아니라 권한 거부일 수 있으므로 재로그인·토큰 갱신의
+    근거로 사용하지 않는다. 해당 source만 비재시도 오류로 기록하고 다른 source의
+    성공 자료는 계속 반환한다.
+  - `courseresource`는 LearningX HTTP/API를 먼저 시도하고 실패 시 Playwright 인터셉트로
+    폴백한다. `modulebuilder`는 아직 Playwright를 사용한다.
 - 출력: `{ ok, course_id, sources: { requested, succeeded, failed }, materials, errors, warnings }`
   - material: `{ id, title, type, url, source, module_name?, is_playright_required?, is_downloaded?, local_path? }`
   - 동영상 자료는 `type`이 `mp4`/`video/*` 계열이고 `url`이 `https://ocs.cau.ac.kr/em/...` 형태일 수 있다. 다운로드는 파일 도구가 아니라 `eclass_download_video`를 사용한다.

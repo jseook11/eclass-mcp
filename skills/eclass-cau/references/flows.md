@@ -8,7 +8,11 @@
 
 1. `eclass_get_courses_cached`로 강의 목록을 가져온다 (네트워크 없음). (C1)
 2. 강의명을 목록과 매치해 `course_id`를 정한다. 모호하면 후보를 제시한다. (C1)
-3. `eclass_get_materials { course_id }`로 자료 위치/목록을 탐색한다.
+3. 우선 `eclass_get_materials { course_id, sources: ["modulebuilder", "courseresource", "announcements", "modules", "external"] }`로
+   자료 위치/목록을 탐색한다. 강의자료는 여러 위치에 분산될 수 있으므로 한 source가
+   비어 있지 않아도 다른 source를 생략하지 않는다. Canvas 기본 파일함은 Files 탭이
+   실제로 보이거나 사용자가 명시적으로 요청한 경우에만 별도로 마지막 확인한다
+   (`sources: ["files"]`).
 4. `is_downloaded: false`인 항목을 `eclass_download_materials_batch`에 넘긴다. 영상
    항목은 배치가 거부·안내하므로 "동영상 다운로드" 흐름으로 받는다. (C2, C4)
 

@@ -1,6 +1,44 @@
 const ACCEPT_HEADER = "application/json+canvas-string-ids, application/json";
 const REQUEST_TIMEOUT_MS = 30_000;
 
+export class CanvasApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly url: string,
+    public readonly permissionDenied = false,
+    message = `Canvas API error ${status}`,
+  ) {
+    super(message);
+    this.name = 'CanvasApiError';
+  }
+}
+
+export function isCanvasPermissionDeniedError(error: unknown): error is CanvasApiError {
+  return error instanceof CanvasApiError && error.permissionDenied;
+}
+
+function isCourseFilesCollectionUrl(url: string): boolean {
+  try {
+    return /^\/api\/v1\/courses\/\d+\/files\/?$/.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function isPermissionDeniedResponse(response: Response, url: string): Promise<boolean> {
+  if (response.status !== 401 && response.status !== 403) return false;
+  if (isCourseFilesCollectionUrl(url)) return true;
+
+  // Some LearningX endpoints use 401 for an authorization decision instead of
+  // an expired token. Read a clone so the caller can still consume the body.
+  try {
+    const body = await response.clone().text();
+    return /권한이\s*(?:없|없음)|permission\s+(?:denied|not\s+allowed)|not\s+authorized/i.test(body);
+  } catch {
+    return false;
+  }
+}
+
 function parseNextLink(linkHeader: string | null): string | null {
   if (!linkHeader) return null;
   // Link header may contain multiple entries separated by commas
@@ -15,9 +53,10 @@ function parseNextLink(linkHeader: string | null): string | null {
 
 export class CanvasClient {
   /**
-   * @param onAuthError - called once when a request returns 401 (token expired
-   *   or revoked server-side). Should invalidate the cached token, re-login,
-   *   and return a fresh token; the failed request is retried once with it.
+   * @param onAuthError - called once when a request returns an authentication
+   *   401 (not a permission-denied response). Should invalidate the cached
+   *   token, re-login, and return a fresh token; the failed request is retried
+   *   once with it.
    */
   constructor(
     private baseUrl: string,
@@ -47,18 +86,21 @@ export class CanvasClient {
         ...(init.body ? { body: init.body } : {}),
       });
 
-      // 401 = 토큰 만료/회수. 캐시 토큰을 폐기하고 재로그인 후 한 번만 재시도.
-      if (response.status === 401 && this.onAuthError && attempt === 0) {
+      const permissionDenied = await isPermissionDeniedResponse(response, url);
+
+      // 401 can also be a resource-level authorization decision. Never rotate
+      // credentials for that case; the caller can report/cache the denial.
+      if (response.status === 401 && this.onAuthError && attempt === 0 && !permissionDenied) {
         this.token = await this.onAuthError(requestToken);
         continue;
       }
 
       if (!response.ok) {
-        throw new Error(`Canvas API error ${response.status}`);
+        throw new CanvasApiError(response.status, url, permissionDenied);
       }
       return response;
     }
-    throw new Error('Canvas API error 401');
+    throw new CanvasApiError(401, url);
   }
 
   async fetchAll<T>(path: string, params?: Record<string, string>): Promise<T[]> {

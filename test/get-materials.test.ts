@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 
 import { getMaterials, isGetMaterialsToolError } from '../src/tools/get-materials.js';
 import type { MaterialSource } from '../src/tools/get-materials.js';
-import type { CanvasClient } from '../src/canvas-client.js';
+import { CanvasClient } from '../src/canvas-client.js';
+import type { CanvasClient as CanvasClientType } from '../src/canvas-client.js';
 import type { BrowserSession } from '../src/browser-session.js';
 import type { FileCache } from '../src/file-cache.js';
 
 function mockClient(
   fetchAll: (path: string, params?: Record<string, string>) => Promise<unknown[]>,
-): CanvasClient {
-  return { fetchAll } as CanvasClient;
+): CanvasClientType {
+  return { fetchAll } as CanvasClientType;
 }
 
 function mockSession(overrides: Partial<BrowserSession> = {}): BrowserSession {
@@ -108,6 +109,39 @@ test('getMaterials reports files 401 and 403 as non-retryable errors', async () 
     assert.equal(result.errors.length, 1);
     assert.equal(result.errors[0].source, 'files');
     assert.equal(result.errors[0].retryable, false);
+  }
+});
+
+test('getMaterials suppresses repeated Files permission-denied requests during the cooldown', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(JSON.stringify({
+      status: '권한이 없음',
+      errors: [{ message: '사용자에게 이 동작을 수행할 권한이 없음' }],
+    }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  const client = new CanvasClient(
+    'https://eclass3.cau.ac.kr',
+    'token',
+  );
+  const courseId = 9139260;
+
+  try {
+    const first = await getMaterials(client, mockSession(), courseId, ['files']);
+    const second = await getMaterials(client, mockSession(), courseId, ['files']);
+
+    assert.equal(first.errors[0].retryable, false);
+    assert.equal(second.errors[0].retryable, false);
+    assert.match(second.errors[0].reason, /Files API/);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });
 

@@ -24,6 +24,26 @@ description: 중앙대 eclass(LearningX/Canvas) 작업 — 강의·과제·성�
 - 캐시가 학기 경계로 오래됐거나 다운로드 후 `is_downloaded`가 바뀌었을 만하면 다시 확인한다.
 - `[로컬]` 도구를 우선하고 `[네트워크]`는 꼭 필요할 때만 호출한다.
 
+## 자료 탐색 원칙
+
+- 강의자료는 한 저장소에만 있다고 가정하지 않는다. 주차학습(ModuleBuilder),
+  LearningX 강의자료실(CourseResource), 공지 첨부파일, Canvas 모듈에 연결된 링크와
+  외부도구에 분산될 수 있으므로 결과를 모두 수집해 합친다. 한 경로에서 자료를
+  찾았다고 다른 경로를 생략하지 않는다.
+- 자료 위치의 논리적 우선도는 `modulebuilder`(주차학습) → `courseresource`(강의자료실)
+  → `announcements`(공지 첨부) → `modules`/`external`(보조 링크) → `files`(Canvas
+  기본 파일함) 순으로 본다.
+- 위 순서는 자료의 의미와 fallback 판단 순서이며, 여러 경로를 조회할 때 결과가
+  한 곳에만 존재한다고 단정하지 않는다. 각 항목의 `source`를 보존한다.
+- `files`는 중앙대 e-Class에서 교수 미사용 또는 학생 권한 제한으로 401이 날 수 있는
+  Canvas 기본 파일함이다. 기본 자료 탐색에서는 먼저 `modulebuilder`,
+  `courseresource`, `announcements`, `modules`, `external`을 조회하고, Files 탭이
+  실제로 노출되거나 사용자가 명시적으로 요청한 경우에만 `files`를 마지막으로
+  확인한다.
+- `files`의 401 응답은 토큰 만료로 단정하지 않는다. 권한 거부로 기록하고 인증
+  갱신을 반복하지 않는다. 다른 자료 source가 성공하면 전체 자료 조회는 부분
+  성공으로 처리한다.
+
 ## 출력 규칙
 
 핵심만 간결하게. 진행 중계("이제 ~하겠습니다")·완료 인사·툴 호출 나열·미사여구는

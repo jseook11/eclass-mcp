@@ -116,3 +116,39 @@ test('CanvasClient does not retry twice when refreshed token is also rejected', 
     globalThis.fetch = originalFetch;
   }
 });
+
+test('CanvasClient does not refresh on a course Files permission-denied 401', async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response(JSON.stringify({
+      status: '권한이 없음',
+      errors: [{ message: '사용자에게 이 동작을 수행할 권한이 없음' }],
+    }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  let refreshed = 0;
+  const client = new CanvasClient(
+    'https://eclass3.cau.ac.kr',
+    'token',
+    async () => {
+      refreshed += 1;
+      return 'new-token';
+    },
+  );
+
+  try {
+    await assert.rejects(
+      () => client.fetchAll('/api/v1/courses/139260/files'),
+      /Canvas API error 401/,
+    );
+    assert.equal(calls, 1);
+    assert.equal(refreshed, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -21,6 +21,13 @@ export interface CachedCourse {
   fetched_at: string;
 }
 
+export interface SourceAccessDenial {
+  course_id: number;
+  source: string;
+  denied_until: string;
+  reason: string;
+}
+
 export class FileCache {
   private db: Database.Database;
 
@@ -44,6 +51,14 @@ export class FileCache {
         name        TEXT NOT NULL,
         fetched_at  TEXT NOT NULL,
         is_current  INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS source_access_denials (
+        course_id   INTEGER NOT NULL,
+        source      TEXT NOT NULL,
+        denied_until TEXT NOT NULL,
+        reason      TEXT NOT NULL DEFAULT '',
+        PRIMARY KEY (course_id, source)
       )
     `);
 
@@ -165,5 +180,27 @@ export class FileCache {
     return this.db
       .prepare('SELECT course_id, name, fetched_at FROM cached_courses WHERE course_id = ?')
       .get(courseId) as CachedCourse | undefined;
+  }
+
+  getSourceAccessDenial(courseId: number, source: string): SourceAccessDenial | undefined {
+    return this.db
+      .prepare('SELECT course_id, source, denied_until, reason FROM source_access_denials WHERE course_id = ? AND source = ?')
+      .get(courseId, source) as SourceAccessDenial | undefined;
+  }
+
+  setSourceAccessDenial(courseId: number, source: string, deniedUntil: string, reason = ''): void {
+    this.db.prepare(`
+      INSERT INTO source_access_denials (course_id, source, denied_until, reason)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(course_id, source) DO UPDATE SET
+        denied_until = excluded.denied_until,
+        reason = excluded.reason
+    `).run(courseId, source, deniedUntil, reason);
+  }
+
+  clearSourceAccessDenial(courseId: number, source: string): void {
+    this.db
+      .prepare('DELETE FROM source_access_denials WHERE course_id = ? AND source = ?')
+      .run(courseId, source);
   }
 }

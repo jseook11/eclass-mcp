@@ -76,6 +76,16 @@ test('FileCache migrates an old downloaded_files table by adding source column',
 
     cache.replaceCurrentCourses([], '2026-08-28T00:00:00.000Z');
     assert.deepEqual(cache.listCachedCourses(), []);
+
+    cache.setSourceAccessDenial(139260, 'files', '2026-08-27T22:18:00.000Z', '권한이 없음');
+    assert.deepEqual(cache.getSourceAccessDenial(139260, 'files'), {
+      course_id: 139260,
+      source: 'files',
+      denied_until: '2026-08-27T22:18:00.000Z',
+      reason: '권한이 없음',
+    });
+    cache.clearSourceAccessDenial(139260, 'files');
+    assert.equal(cache.getSourceAccessDenial(139260, 'files'), undefined);
     assert.equal(cache.listCourseCatalog().length, 4);
     cache.getDb().close();
   });
