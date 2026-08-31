@@ -294,7 +294,9 @@ MCP 서버 로컬 캐시에 다운로드된 파일 기록 검색. **네트워크
   - `courseresource`는 LearningX HTTP/API를 먼저 시도하고 실패 시 Playwright 인터셉트로
     폴백한다. `modulebuilder`는 아직 Playwright를 사용한다.
 - 출력: `{ ok, course_id, sources: { requested, succeeded, failed }, materials, errors, warnings }`
-  - material: `{ id, title, type, url, source, module_name?, is_playright_required?, is_downloaded?, local_path? }`
+  - material: `{ id, title, type, url, source, sources?, module_name?, is_playright_required?, is_downloaded?, local_path? }`
+  - 동일 source의 같은 ID, 동일 OCS 콘텐츠 URL, Canvas file URL 별칭, 같은 주차학습/외부도구 module item은 하나로 합친다. `source`는 의미 우선순위가 가장 높은 대표 출처이고, `sources`에는 합쳐진 모든 출처를 보존한다. 제목만 같은 서로 다른 ID는 합치지 않는다.
+  - `modules`와 `external`을 함께 요청해도 공통 Canvas modules API는 한 번만 호출하고 결과를 유형별로 나눈다.
   - 동영상 자료는 `type`이 `mp4`/`video/*` 계열이고 `url`이 `https://ocs.cau.ac.kr/em/...` 형태일 수 있다. 다운로드는 파일 도구가 아니라 `eclass_download_video`를 사용한다.
   - `is_downloaded: true`면 이미 로컬에 있음 (`local_path` 참조) — 재다운로드 불필요.
   - ModuleBuilder가 `lecture_period_status: "not_open"` 또는 `content_id: "not_open"`을 반환하는 항목은 자료 목록에서 제외한다. `not_open` placeholder를 OCS URL로 반환하지 않으며, 해당 항목만 있다면 빈 성공 목록으로 반환한다.

@@ -21,6 +21,8 @@ export interface Material {
   type: string;
   url: string | null;
   source: MaterialSource;
+  /** All source aliases collapsed into this material, in semantic priority order. */
+  sources?: MaterialSource[];
   module_name?: string;
   is_playright_required?: boolean;
   is_downloaded?: boolean;
@@ -130,12 +132,8 @@ function clearFilesDenial(courseId: number, cache?: FileCache): void {
   }
 }
 
-async function fetchModules(client: CanvasClient, courseId: number): Promise<Material[]> {
-  const raw = await client.fetchAll<RawModule>(
-    `/api/v1/courses/${courseId}/modules`,
-    { 'include[]': 'items', per_page: '50' },
-  );
-
+async function fetchModules(loadModules: () => Promise<RawModule[]>): Promise<Material[]> {
+  const raw = await loadModules();
   const materials: Material[] = [];
   for (const module of raw) {
     for (const item of module.items ?? []) {
@@ -240,12 +238,8 @@ async function fetchModulebuilder(session: BrowserSession, courseId: number): Pr
   }));
 }
 
-async function fetchExternal(client: CanvasClient, courseId: number): Promise<Material[]> {
-  const raw = await client.fetchAll<RawModule>(
-    `/api/v1/courses/${courseId}/modules`,
-    { 'include[]': 'items', per_page: '50' },
-  );
-
+async function fetchExternal(loadModules: () => Promise<RawModule[]>): Promise<Material[]> {
+  const raw = await loadModules();
   const materials: Material[] = [];
   for (const module of raw) {
     for (const item of module.items ?? []) {
@@ -275,16 +269,134 @@ function materialTask(
   client: CanvasClient,
   session: BrowserSession,
   courseId: number,
+  loadModules: () => Promise<RawModule[]>,
   cache?: FileCache,
 ): Promise<Material[]> {
   switch (source) {
-    case 'modules': return fetchModules(client, courseId);
+    case 'modules': return fetchModules(loadModules);
     case 'files': return fetchFiles(client, courseId, cache);
     case 'courseresource': return fetchCourseresource(session, courseId);
-    case 'external': return fetchExternal(client, courseId);
+    case 'external': return fetchExternal(loadModules);
     case 'modulebuilder': return fetchModulebuilder(session, courseId);
     case 'announcements': return fetchAnnouncements(client, courseId);
   }
+}
+
+const SOURCE_PRIORITY: MaterialSource[] = [
+  'modulebuilder',
+  'courseresource',
+  'announcements',
+  'modules',
+  'external',
+  'files',
+];
+
+function materialIdentityKeys(material: Material): string[] {
+  const keys: string[] = [];
+  if (material.id) keys.push(`source:${material.source}:id:${material.id}`);
+  if (
+    material.id
+    && (material.source === 'modulebuilder' || material.source === 'external')
+  ) {
+    keys.push(`module-item:${material.id}`);
+  }
+  if (
+    material.id
+    && (material.source === 'files' || material.source === 'announcements')
+  ) {
+    keys.push(`canvas-file:${material.id}`);
+  }
+
+  if (!material.url) return keys;
+  try {
+    const url = new URL(material.url);
+    url.hash = '';
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.replace(/\/+$/, '') || '/';
+
+    if (host === 'ocs.cau.ac.kr') {
+      const content = path.match(/^\/em\/([^/]+)$/);
+      if (content) keys.push(`ocs-content:${decodeURIComponent(content[1])}`);
+    }
+    if (host === 'eclass3.cau.ac.kr') {
+      const file = path.match(/\/(?:courses\/\d+\/)?files\/(\d+)(?:\/download)?$/);
+      if (file) keys.push(`canvas-file:${file[1]}`);
+      const moduleItem = path.match(/^\/courses\/\d+\/modules\/items\/(\d+)$/);
+      if (moduleItem) keys.push(`module-item:${moduleItem[1]}`);
+    }
+
+    url.hostname = host;
+    url.pathname = path;
+    url.searchParams.sort();
+    keys.push(`url:${url.toString()}`);
+  } catch {
+    // Invalid URLs are already tolerated by the material contract. The
+    // source-local ID still gives us a safe identity key.
+  }
+  return [...new Set(keys)];
+}
+
+function sourceRank(source: MaterialSource): number {
+  return SOURCE_PRIORITY.indexOf(source);
+}
+
+function mergeMaterialGroup(group: Material[]): Material {
+  const ranked = group
+    .map((material, index) => ({ material, index }))
+    .sort((a, b) => sourceRank(a.material.source) - sourceRank(b.material.source) || a.index - b.index);
+  const primary = ranked[0].material;
+  const downloaded = ranked.find(({ material }) => material.is_downloaded && material.local_path)?.material;
+  const moduleName = primary.module_name
+    ?? ranked.find(({ material }) => material.module_name)?.material.module_name;
+  const sources = [...new Set(group.map((material) => material.source))]
+    .sort((a, b) => sourceRank(a) - sourceRank(b));
+
+  return {
+    ...primary,
+    sources,
+    ...(moduleName ? { module_name: moduleName } : {}),
+    ...(group.some((material) => material.is_downloaded !== undefined)
+      ? { is_downloaded: Boolean(downloaded) }
+      : {}),
+    ...(downloaded?.local_path ? { local_path: downloaded.local_path } : {}),
+  };
+}
+
+function deduplicateMaterials(materials: Material[]): Material[] {
+  const parent = materials.map((_, index) => index);
+  const find = (index: number): number => {
+    while (parent[index] !== index) {
+      parent[index] = parent[parent[index]];
+      index = parent[index];
+    }
+    return index;
+  };
+  const union = (left: number, right: number): void => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot;
+  };
+  const firstByKey = new Map<string, number>();
+
+  materials.forEach((material, index) => {
+    for (const key of materialIdentityKeys(material)) {
+      const previous = firstByKey.get(key);
+      if (previous === undefined) firstByKey.set(key, index);
+      else union(previous, index);
+    }
+  });
+
+  const groups = new Map<number, { first: number; materials: Material[] }>();
+  materials.forEach((material, index) => {
+    const root = find(index);
+    const group = groups.get(root);
+    if (group) group.materials.push(material);
+    else groups.set(root, { first: index, materials: [material] });
+  });
+
+  return [...groups.values()]
+    .sort((a, b) => a.first - b.first)
+    .map(({ materials: group }) => mergeMaterialGroup(group));
 }
 
 function sanitizeUrl(rawUrl: string): string {
@@ -350,8 +462,17 @@ export async function getMaterials(
     throw new Error('sources must not be empty');
   }
 
+  let modulesPromise: Promise<RawModule[]> | null = null;
+  const loadModules = (): Promise<RawModule[]> => {
+    modulesPromise ??= client.fetchAll<RawModule>(
+      `/api/v1/courses/${courseId}/modules`,
+      { 'include[]': 'items', per_page: '50' },
+    );
+    return modulesPromise;
+  };
+
   const settled = await Promise.allSettled(
-    requested.map((source) => materialTask(source, client, session, courseId, cache)),
+    requested.map((source) => materialTask(source, client, session, courseId, loadModules, cache)),
   );
 
   const materials: Material[] = [];
@@ -398,7 +519,7 @@ export async function getMaterials(
       succeeded,
       failed,
     },
-    materials,
+    materials: deduplicateMaterials(materials),
     errors,
     warnings,
   };

@@ -213,6 +213,125 @@ test('getMaterials runs duplicate sources only once', async () => {
   assert.deepEqual(result.sources.requested, ['modules']);
 });
 
+test('getMaterials merges the same opened weekly item from modulebuilder and external', async () => {
+  const client = mockClient(async () => [
+    {
+      id: 1,
+      name: '1주차',
+      items: [{
+        id: 3707021,
+        title: 'algorithm_01.1_introduction',
+        type: 'ExternalTool',
+        html_url: '/courses/147863/modules/items/3707021',
+      }],
+    },
+  ]);
+  const session = mockSession({
+    interceptModulebuilder: async () => [{
+      id: '3707021',
+      title: 'algorithm_01.1_introduction',
+      type: 'movie',
+      url: 'https://ocs.cau.ac.kr/em/lecture-content-id',
+    }],
+  });
+
+  const result = await getMaterials(client, session, 147863, ['external', 'modulebuilder']);
+
+  assert.equal(result.materials.length, 1);
+  assert.deepEqual(result.materials[0], {
+    id: '3707021',
+    title: 'algorithm_01.1_introduction',
+    type: 'movie',
+    url: 'https://ocs.cau.ac.kr/em/lecture-content-id',
+    source: 'modulebuilder',
+    sources: ['modulebuilder', 'external'],
+    module_name: '1주차',
+    is_playright_required: true,
+  });
+});
+
+test('getMaterials merges Canvas file aliases across modules and announcements', async () => {
+  const client = mockClient(async (path) => {
+    if (path.includes('/modules')) {
+      return [{
+        id: 1,
+        name: '1주차',
+        items: [{
+          id: 10,
+          title: 'lecture.pdf',
+          type: 'File',
+          html_url: '/courses/1/files/55?module_item_id=10',
+        }],
+      }];
+    }
+    if (path.includes('/discussion_topics')) {
+      return [{
+        id: 20,
+        title: '강의자료 안내',
+        attachments: [{
+          id: 55,
+          display_name: 'lecture.pdf',
+          url: 'https://eclass3.cau.ac.kr/files/55/download?download_frd=1',
+          'content-type': 'application/pdf',
+        }],
+      }];
+    }
+    return [];
+  });
+
+  const result = await getMaterials(client, mockSession(), 1, ['modules', 'announcements']);
+
+  assert.equal(result.materials.length, 1);
+  assert.equal(result.materials[0].source, 'announcements');
+  assert.deepEqual(result.materials[0].sources, ['announcements', 'modules']);
+});
+
+test('getMaterials removes repeated records within one source', async () => {
+  const duplicate = {
+    id: 'resource-1',
+    title: 'lecture.pdf',
+    type: 'pdf',
+    url: 'https://ocs.cau.ac.kr/em/resource-1',
+  };
+  const result = await getMaterials(
+    mockClient(async () => []),
+    mockSession({ interceptCourseresource: async () => [duplicate, duplicate] }),
+    1,
+    ['courseresource'],
+  );
+
+  assert.equal(result.materials.length, 1);
+  assert.deepEqual(result.materials[0].sources, ['courseresource']);
+});
+
+test('getMaterials keeps distinct items that only share a title', async () => {
+  const result = await getMaterials(
+    mockClient(async () => []),
+    mockSession({
+      interceptCourseresource: async () => [
+        { id: 'resource-1', title: '강의자료.pdf', type: 'pdf', url: null },
+        { id: 'resource-2', title: '강의자료.pdf', type: 'pdf', url: null },
+      ],
+    }),
+    1,
+    ['courseresource'],
+  );
+
+  assert.deepEqual(result.materials.map((material) => material.id), ['resource-1', 'resource-2']);
+});
+
+test('getMaterials fetches the shared Canvas modules endpoint once', async () => {
+  let moduleFetchCount = 0;
+  const client = mockClient(async (path) => {
+    if (path.includes('/modules')) moduleFetchCount += 1;
+    return [];
+  });
+
+  await getMaterials(client, mockSession(), 1, ['modules', 'external']);
+
+  assert.equal(moduleFetchCount, 1);
+});
+
 test('getMaterials treats empty successful source plus failed source as partial success', async () => {
   const client = mockClient(async (path) => {
     if (path.includes('/modules')) return [];
