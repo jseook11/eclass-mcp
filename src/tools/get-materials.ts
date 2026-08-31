@@ -1,7 +1,6 @@
 import { CanvasApiError, CanvasClient, isCanvasPermissionDeniedError } from '../canvas-client.js';
 import { BrowserSession } from '../browser-session.js';
 import { FileCache } from '../file-cache.js';
-import { LearningPeriodNotStartedError } from '../resource-items.js';
 
 const BASE_URL = 'https://eclass3.cau.ac.kr';
 
@@ -23,8 +22,6 @@ export interface MaterialFetchError {
   source: MaterialSource;
   reason: string;
   retryable: boolean;
-  error_code?: string;
-  next_action?: string;
 }
 
 export interface MaterialFetchWarning {
@@ -318,18 +315,9 @@ function isRetryableError(reason: string): boolean {
 function toMaterialIssue<TSource extends MaterialSource | 'cache'>(
   source: TSource,
   err: unknown,
-): { source: TSource; reason: string; retryable: boolean; error_code?: string; next_action?: string } {
+): { source: TSource; reason: string; retryable: boolean } {
   const rawReason = err instanceof Error ? err.message : String(err);
   const reason = sanitizeReason(rawReason) || 'Unknown error';
-  if (err instanceof LearningPeriodNotStartedError) {
-    return {
-      source,
-      reason,
-      retryable: false,
-      error_code: err.code,
-      next_action: '학습 시작 이후 다시 조회하세요.',
-    };
-  }
   return {
     source,
     reason,

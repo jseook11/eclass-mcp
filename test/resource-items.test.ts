@@ -26,15 +26,8 @@ const notStartedModulebuilderResponse = [
   },
 ];
 
-test('parseModulebuilderItems reports when the learning period has not started', () => {
-  assert.throws(
-    () => parseModulebuilderItems(notStartedModulebuilderResponse),
-    (error: unknown) => {
-      assert.equal((error as { code?: string }).code, 'LEARNING_PERIOD_NOT_STARTED');
-      assert.match(error instanceof Error ? error.message : String(error), /학습 기간/);
-      return true;
-    },
-  );
+test('parseModulebuilderItems omits materials before the learning period starts', () => {
+  assert.deepEqual(parseModulebuilderItems(notStartedModulebuilderResponse), []);
 });
 
 test('parseModulebuilderItems keeps available items and omits future-period placeholders', () => {

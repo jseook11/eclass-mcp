@@ -7,7 +7,6 @@ import { CanvasClient } from '../src/canvas-client.js';
 import type { CanvasClient as CanvasClientType } from '../src/canvas-client.js';
 import type { BrowserSession } from '../src/browser-session.js';
 import type { FileCache } from '../src/file-cache.js';
-import { LearningPeriodNotStartedError } from '../src/resource-items.js';
 
 function mockClient(
   fetchAll: (path: string, params?: Record<string, string>) => Promise<unknown[]>,
@@ -83,28 +82,21 @@ test('getMaterials returns ok false when all requested sources fail', async () =
   assert.deepEqual(result.warnings, []);
 });
 
-test('getMaterials returns a non-retryable learning-period error for a not-started modulebuilder', async () => {
+test('getMaterials treats a not-started modulebuilder as an empty successful source', async () => {
   const result = await getMaterials(
     mockClient(async () => []),
     mockSession({
-      interceptModulebuilder: async () => {
-        throw new LearningPeriodNotStartedError('2026-09-03T15:00:00Z');
-      },
+      interceptModulebuilder: async () => [],
     }),
     147863,
     ['modulebuilder'],
   );
 
-  assert.equal(result.ok, false);
+  assert.equal(result.ok, true);
   assert.deepEqual(result.materials, []);
-  assert.equal(result.errors.length, 1);
-  assert.deepEqual(result.errors[0], {
-    source: 'modulebuilder',
-    reason: '현재 학습 기간이 아닙니다. 학습 시작: 2026-09-03T15:00:00Z',
-    retryable: false,
-    error_code: 'LEARNING_PERIOD_NOT_STARTED',
-    next_action: '학습 시작 이후 다시 조회하세요.',
-  });
+  assert.deepEqual(result.sources.succeeded, ['modulebuilder']);
+  assert.deepEqual(result.sources.failed, []);
+  assert.deepEqual(result.errors, []);
 });
 
 test('getMaterials returns ok true when all sources succeed with no materials', async () => {

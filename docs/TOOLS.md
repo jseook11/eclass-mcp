@@ -297,8 +297,7 @@ MCP 서버 로컬 캐시에 다운로드된 파일 기록 검색. **네트워크
   - material: `{ id, title, type, url, source, module_name?, is_playright_required?, is_downloaded?, local_path? }`
   - 동영상 자료는 `type`이 `mp4`/`video/*` 계열이고 `url`이 `https://ocs.cau.ac.kr/em/...` 형태일 수 있다. 다운로드는 파일 도구가 아니라 `eclass_download_video`를 사용한다.
   - `is_downloaded: true`면 이미 로컬에 있음 (`local_path` 참조) — 재다운로드 불필요.
-  - ModuleBuilder가 `lecture_period_status: "not_open"` 또는 `content_id: "not_open"`을 반환하고 사용할 수 있는 자료가 없으면 해당 source 오류에 `error_code: "LEARNING_PERIOD_NOT_STARTED"`, `retryable: false`를 기록한다. `not_open` placeholder를 OCS URL로 반환하지 않는다.
-  - 위 오류의 `reason`은 현재 학습 기간이 아님을, `next_action`은 학습 시작 이후 재조회해야 함을 안내한다. 다른 source가 성공하면 자료와 함께 부분 성공으로 반환한다.
+  - ModuleBuilder가 `lecture_period_status: "not_open"` 또는 `content_id: "not_open"`을 반환하는 항목은 자료 목록에서 제외한다. `not_open` placeholder를 OCS URL로 반환하지 않으며, 해당 항목만 있다면 빈 성공 목록으로 반환한다.
 - `ok: false`는 모든 source 실패. `errors[].retryable`이 true면 재시도 가치 있음.
 - 파일 본문이 필요하면 `eclass_download_file`/`eclass_download_materials_batch`로 MCP 서버 로컬 캐시에 받은 뒤, `eclass_file_handoff`로 공개 URL을 별도 발급한다.
 
