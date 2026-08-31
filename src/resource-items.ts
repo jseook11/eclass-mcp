@@ -33,12 +33,33 @@ export function parseResourceItems(body: unknown, options: { strict?: boolean } 
   return [];
 }
 
+export class LearningPeriodNotStartedError extends Error {
+  readonly code = 'LEARNING_PERIOD_NOT_STARTED';
+  readonly unlockAt: string | null;
+
+  constructor(unlockAt: string | null = null) {
+    super(
+      unlockAt
+        ? `현재 학습 기간이 아닙니다. 학습 시작: ${unlockAt}`
+        : '현재 학습 기간이 아닙니다.',
+    );
+    this.name = 'LearningPeriodNotStartedError';
+    this.unlockAt = unlockAt;
+  }
+}
+
 export function parseModulebuilderItems(body: unknown): ResourceItem[] {
   if (!Array.isArray(body)) return [];
   const results: ResourceItem[] = [];
+  let hasNotStartedItem = false;
+  let unlockAt: string | null = null;
   for (const mod of body) {
     if (!mod || typeof mod !== 'object') continue;
-    const items = (mod as Record<string, unknown>)['module_items'];
+    const moduleObject = mod as Record<string, unknown>;
+    const moduleUnlockAt = typeof moduleObject['unlock_at'] === 'string'
+      ? moduleObject['unlock_at'].trim() || null
+      : null;
+    const items = moduleObject['module_items'];
     if (!Array.isArray(items)) continue;
     for (const item of items) {
       if (!item || typeof item !== 'object') continue;
@@ -47,10 +68,32 @@ export function parseModulebuilderItems(body: unknown): ResourceItem[] {
       if (!cd || typeof cd !== 'object') continue;
       const contentData = cd as Record<string, unknown>;
       if (contentData['item_content_type'] !== 'commons') continue;
+
+      const lecturePeriodStatus = typeof contentData['lecture_period_status'] === 'string'
+        ? contentData['lecture_period_status'].trim().toLowerCase()
+        : null;
+      const itemUnlockAt = typeof contentData['unlock_at'] === 'string'
+        ? contentData['unlock_at'].trim() || null
+        : null;
+      const markNotStarted = (): void => {
+        hasNotStartedItem = true;
+        if (unlockAt === null) unlockAt = itemUnlockAt ?? moduleUnlockAt;
+      };
+      if (lecturePeriodStatus === 'not_open') {
+        markNotStarted();
+        continue;
+      }
+
       const icd = contentData['item_content_data'];
       if (!icd || typeof icd !== 'object') continue;
       const itemContentData = icd as Record<string, unknown>;
       const contentId = typeof itemContentData['content_id'] === 'string' ? itemContentData['content_id'] : null;
+
+      if (contentId?.trim().toLowerCase() === 'not_open') {
+        markNotStarted();
+        continue;
+      }
+
       if (!contentId) continue;
       results.push({
         id: String(obj['module_item_id'] ?? ''),
@@ -60,6 +103,11 @@ export function parseModulebuilderItems(body: unknown): ResourceItem[] {
       });
     }
   }
+
+  if (results.length === 0 && hasNotStartedItem) {
+    throw new LearningPeriodNotStartedError(unlockAt);
+  }
+
   return results;
 }
 

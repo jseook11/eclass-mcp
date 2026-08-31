@@ -158,6 +158,13 @@ GET /learningx/api/v1/courses/:course_id/sis_course/check
 - `xn_api_token` Bearer로 `modules?include_detail=true` 200.
 - 단, `course_id=<course_id>`에서는 modules 배열 length 0. 실제 주차학습 자료가 있는 다른 과목에서 추가 검증 필요.
 
+추가 검증 (2026-08-31, course `147863`, 알고리즘 03분반):
+
+- `GET /learningx/api/v1/courses/147863/modules?include_detail=true`는 200이며 1주차 8개 항목을 반환한다.
+- 학습 시작 전 항목은 `content_data.lecture_period_status: "not_open"`, `content_data.unlock_at: "2026-09-03T15:00:00Z"`, `item_content_data.content_id: "not_open"`, 빈 `view_url`로 표시된다.
+- `GET /learningx/api/v1/courses/147863/modulebuilder/diagnosis`는 학생 토큰에서 403 `{"message":"forbidden"}`이므로 기간 판별 경로로 사용하지 않는다.
+- 파서는 `not_open` placeholder를 OCS URL로 만들지 않고, 사용 가능한 항목이 하나도 없으면 `LEARNING_PERIOD_NOT_STARTED`로 반환한다. 같은 응답에 공개 항목이 섞이면 공개 항목만 유지한다.
+
 구현 제안:
 
 - 다른 과목에서 데이터가 있는지 먼저 확인한다.
