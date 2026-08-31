@@ -286,16 +286,17 @@ MCP 서버 로컬 캐시에 다운로드된 파일 기록 검색. **네트워크
     Canvas 기본 Files는 Files 탭이 노출되거나 사용자가 명시적으로 요청한 경우에만
     2차로 `sources: ['files']`를 호출한다. 중앙대 학생 계정에서는 Files API가 교수
     미사용/학생 권한 제한으로 401을 반환할 수 있다.
-  - `sources`를 생략하면 현재 구현상 모든 source를 병렬 조회하므로 `files`도 포함된다.
-    Files 401을 피하려면 호출자가 권장 1차 source를 명시한다.
+  - `sources`를 생략하면 권장 1차 source인 `modulebuilder`, `courseresource`,
+    `announcements`, `modules`, `external`을 조회한다. `files`는 자동으로 포함하지 않는다.
   - `files`의 401은 토큰 만료가 아니라 권한 거부일 수 있으므로 재로그인·토큰 갱신의
     근거로 사용하지 않는다. 해당 source만 비재시도 오류로 기록하고 다른 source의
     성공 자료는 계속 반환한다.
   - `courseresource`는 LearningX HTTP/API를 먼저 시도하고 실패 시 Playwright 인터셉트로
     폴백한다. `modulebuilder`는 아직 Playwright를 사용한다.
 - 출력: `{ ok, course_id, sources: { requested, succeeded, failed }, materials, errors, warnings }`
-  - material: `{ id, title, type, url, source, sources?, module_name?, is_playright_required?, is_downloaded?, local_path? }`
+  - material: `{ id, canvas_file_id?, title, type, url, source, sources?, url_source?, module_name?, is_playright_required?, is_downloaded?, local_path? }`
   - 동일 source의 같은 ID, 동일 OCS 콘텐츠 URL, Canvas file URL 별칭, 같은 주차학습/외부도구 module item은 하나로 합친다. `source`는 의미 우선순위가 가장 높은 대표 출처이고, `sources`에는 합쳐진 모든 출처를 보존한다. 제목만 같은 서로 다른 ID는 합치지 않는다.
+  - Canvas File module item은 `content_id`를 `canvas_file_id`로 보존해 module-item URL만 있어도 `files`/`announcements` 별칭과 합친다. 병합 후 `url`/`type`은 영상이면 OCS URL, 일반 파일이면 직접 다운로드 URL을 우선하며, URL 제공자가 대표 `source`와 다르면 `url_source`에 기록한다.
   - `modules`와 `external`을 함께 요청해도 공통 Canvas modules API는 한 번만 호출하고 결과를 유형별로 나눈다.
   - 동영상 자료는 `type`이 `mp4`/`video/*` 계열이고 `url`이 `https://ocs.cau.ac.kr/em/...` 형태일 수 있다. 다운로드는 파일 도구가 아니라 `eclass_download_video`를 사용한다.
   - `is_downloaded: true`면 이미 로컬에 있음 (`local_path` 참조) — 재다운로드 불필요.

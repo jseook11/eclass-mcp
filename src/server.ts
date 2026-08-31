@@ -432,7 +432,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: 'array',
               items: { type: 'string', enum: ['modules', 'files', 'courseresource', 'external', 'modulebuilder', 'announcements'] },
               minItems: 1,
-              description: '가져올 소스. 권장 1차: modulebuilder, courseresource, announcements, modules, external. files는 Files 탭이 보이거나 명시적 요청이 있을 때 마지막으로 별도 조회. 생략하면 현재 구현상 모든 source를 병렬 조회한다.',
+              description: '가져올 소스. 생략 시 modulebuilder, courseresource, announcements, modules, external을 조회한다. files는 Files 탭이 보이거나 명시적 요청이 있을 때 마지막으로 별도 조회한다.',
             },
           },
           required: ['course_id'],

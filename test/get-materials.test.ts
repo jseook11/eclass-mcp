@@ -286,6 +286,78 @@ test('getMaterials merges Canvas file aliases across modules and announcements',
   assert.deepEqual(result.materials[0].sources, ['announcements', 'modules']);
 });
 
+test('getMaterials uses module content_id to merge a module-item URL with Files', async () => {
+  const requestedPaths: string[] = [];
+  const client = mockClient(async (path) => {
+    requestedPaths.push(path);
+    if (path.includes('/modules')) {
+      return [{
+        id: 1,
+        name: '1주차',
+        items: [{
+          id: 10,
+          content_id: 55,
+          title: 'lecture.pdf',
+          type: 'File',
+          html_url: '/courses/1/modules/items/10',
+        }],
+      }];
+    }
+    if (path.includes('/files')) {
+      return [{
+        id: 55,
+        display_name: 'lecture.pdf',
+        url: 'https://eclass3.cau.ac.kr/files/55/download?verifier=signed',
+        'content-type': 'application/pdf',
+      }];
+    }
+    return [];
+  });
+
+  const result = await getMaterials(client, mockSession(), 1, ['modules', 'files']);
+
+  assert.equal(result.materials.length, 1);
+  assert.deepEqual(result.materials[0], {
+    id: '10',
+    canvas_file_id: '55',
+    title: 'lecture.pdf',
+    type: 'application/pdf',
+    url: 'https://eclass3.cau.ac.kr/files/55/download?verifier=signed',
+    source: 'modules',
+    sources: ['modules', 'files'],
+    url_source: 'files',
+    module_name: '1주차',
+  });
+  assert.equal(requestedPaths.filter((path) => path.includes('/files')).length, 1);
+});
+
+test('getMaterials does not merge File module items with missing content_id', async () => {
+  const client = mockClient(async () => [{
+    id: 1,
+    name: '1주차',
+    items: [
+      {
+        id: 10,
+        content_id: '',
+        title: 'lecture.pdf',
+        type: 'File',
+        html_url: '/courses/1/modules/items/10',
+      },
+      {
+        id: 11,
+        content_id: null,
+        title: 'lecture.pdf',
+        type: 'File',
+        html_url: '/courses/1/modules/items/11',
+      },
+    ],
+  }]);
+
+  const result = await getMaterials(client, mockSession(), 1, ['modules']);
+
+  assert.deepEqual(result.materials.map((material) => material.id), ['10', '11']);
+});
+
 test('getMaterials removes repeated records within one source', async () => {
   const duplicate = {
     id: 'resource-1',
@@ -330,6 +402,25 @@ test('getMaterials fetches the shared Canvas modules endpoint once', async () =>
   await getMaterials(client, mockSession(), 1, ['modules', 'external']);
 
   assert.equal(moduleFetchCount, 1);
+});
+
+test('getMaterials default sources omit the permission-sensitive Files API', async () => {
+  const requestedPaths: string[] = [];
+  const client = mockClient(async (path) => {
+    requestedPaths.push(path);
+    return [];
+  });
+
+  const result = await getMaterials(client, mockSession(), 1);
+
+  assert.deepEqual(result.sources.requested, [
+    'modulebuilder',
+    'courseresource',
+    'announcements',
+    'modules',
+    'external',
+  ]);
+  assert.equal(requestedPaths.some((path) => path.includes('/files')), false);
 });
 
 test('getMaterials treats empty successful source plus failed source as partial success', async () => {

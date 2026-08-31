@@ -1,5 +1,5 @@
 import { CanvasApiError, CanvasClient, isCanvasPermissionDeniedError } from '../canvas-client.js';
-import { BrowserSession } from '../browser-session.js';
+import { BrowserSession, isStreamingMediaType } from '../browser-session.js';
 import { FileCache } from '../file-cache.js';
 
 const BASE_URL = 'https://eclass3.cau.ac.kr';
@@ -17,12 +17,15 @@ function resolveMaterialUrl(rawUrl: string | null | undefined): string | null {
 
 export interface Material {
   id: string;
+  canvas_file_id?: string;
   title: string;
   type: string;
   url: string | null;
   source: MaterialSource;
   /** All source aliases collapsed into this material, in semantic priority order. */
   sources?: MaterialSource[];
+  /** Source that supplied `url` when it differs from the representative source. */
+  url_source?: MaterialSource;
   module_name?: string;
   is_playright_required?: boolean;
   is_downloaded?: boolean;
@@ -56,6 +59,7 @@ export interface GetMaterialsResult {
 
 interface RawModuleItem {
   id: number;
+  content_id?: number | string | null;
   title: string;
   type: string;
   html_url?: string | null;
@@ -72,6 +76,15 @@ interface RawFile {
   display_name: string;
   url: string;
   'content-type'?: string;
+}
+
+function normalizeCanvasFileId(value: unknown): string | undefined {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value > 0 ? String(value) : undefined;
+  }
+  if (typeof value !== 'string' || !/^\d+$/.test(value.trim())) return undefined;
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? String(parsed) : undefined;
 }
 
 const FILES_PERMISSION_DENIAL_TTL_MS = 15 * 60 * 1000;
@@ -138,8 +151,10 @@ async function fetchModules(loadModules: () => Promise<RawModule[]>): Promise<Ma
   for (const module of raw) {
     for (const item of module.items ?? []) {
       if (item.type === 'ExternalTool') continue;
+      const canvasFileId = item.type === 'File' ? normalizeCanvasFileId(item.content_id) : undefined;
       materials.push({
         id: String(item.id),
+        ...(canvasFileId ? { canvas_file_id: canvasFileId } : {}),
         title: item.title,
         type: item.type,
         url: resolveMaterialUrl(item.html_url),
@@ -164,6 +179,7 @@ async function fetchFiles(client: CanvasClient, courseId: number, cache?: FileCa
     clearFilesDenial(courseId, cache);
     return raw.map((file) => ({
       id: String(file.id),
+      canvas_file_id: String(file.id),
       title: file.display_name,
       type: file['content-type'] ?? 'file',
       url: file.url,
@@ -215,6 +231,7 @@ async function fetchAnnouncements(client: CanvasClient, courseId: number): Promi
     for (const att of announcement.attachments) {
       materials.push({
         id: String(att.id),
+        canvas_file_id: String(att.id),
         title: att.display_name,
         type: att['content-type'] ?? 'file',
         url: att.url,
@@ -258,7 +275,13 @@ async function fetchExternal(loadModules: () => Promise<RawModule[]>): Promise<M
   return materials;
 }
 
-const ALL_SOURCES: MaterialSource[] = ['modules', 'files', 'courseresource', 'external', 'modulebuilder', 'announcements'];
+const DEFAULT_SOURCES: MaterialSource[] = [
+  'modulebuilder',
+  'courseresource',
+  'announcements',
+  'modules',
+  'external',
+];
 
 function uniqueSources(sources: MaterialSource[]): MaterialSource[] {
   return Array.from(new Set(sources));
@@ -294,6 +317,7 @@ const SOURCE_PRIORITY: MaterialSource[] = [
 function materialIdentityKeys(material: Material): string[] {
   const keys: string[] = [];
   if (material.id) keys.push(`source:${material.source}:id:${material.id}`);
+  if (material.canvas_file_id) keys.push(`canvas-file:${material.canvas_file_id}`);
   if (
     material.id
     && (material.source === 'modulebuilder' || material.source === 'external')
@@ -340,26 +364,81 @@ function sourceRank(source: MaterialSource): number {
   return SOURCE_PRIORITY.indexOf(source);
 }
 
+function isOcsViewerUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.hostname.toLowerCase() === 'ocs.cau.ac.kr' && /^\/em\/[^/]+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isCanvasDirectFileUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.hostname.toLowerCase() === 'eclass3.cau.ac.kr'
+      && /\/files\/\d+\/download\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function isCanvasWrapperUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    return url.hostname.toLowerCase() === 'eclass3.cau.ac.kr'
+      && /^\/courses\/\d+\/modules\/items\/\d+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function locatorRank(material: Material, hasStreamingMedia: boolean): number {
+  if (!material.url) return 0;
+  if (hasStreamingMedia && isOcsViewerUrl(material.url)) return 500;
+  if (!hasStreamingMedia && isCanvasDirectFileUrl(material.url)) return 500;
+  if (isCanvasWrapperUrl(material.url)) return 100;
+  if (isOcsViewerUrl(material.url)) return 350;
+  return 400;
+}
+
 function mergeMaterialGroup(group: Material[]): Material {
   const ranked = group
     .map((material, index) => ({ material, index }))
     .sort((a, b) => sourceRank(a.material.source) - sourceRank(b.material.source) || a.index - b.index);
   const primary = ranked[0].material;
+  const hasStreamingMedia = group.some((material) => isStreamingMediaType(material.type));
+  const locator = group
+    .map((material, index) => ({ material, index }))
+    .sort((a, b) => locatorRank(b.material, hasStreamingMedia) - locatorRank(a.material, hasStreamingMedia)
+      || sourceRank(a.material.source) - sourceRank(b.material.source)
+      || a.index - b.index)[0].material;
   const downloaded = ranked.find(({ material }) => material.is_downloaded && material.local_path)?.material;
   const moduleName = primary.module_name
     ?? ranked.find(({ material }) => material.module_name)?.material.module_name;
   const sources = [...new Set(group.map((material) => material.source))]
     .sort((a, b) => sourceRank(a) - sourceRank(b));
+  const canvasFileId = primary.canvas_file_id
+    ?? ranked.find(({ material }) => material.canvas_file_id)?.material.canvas_file_id;
 
-  return {
+  const merged: Material = {
     ...primary,
+    ...(canvasFileId ? { canvas_file_id: canvasFileId } : {}),
+    type: locator.type || primary.type,
+    url: locator.url,
     sources,
+    ...(locator.source !== primary.source ? { url_source: locator.source } : {}),
     ...(moduleName ? { module_name: moduleName } : {}),
     ...(group.some((material) => material.is_downloaded !== undefined)
       ? { is_downloaded: Boolean(downloaded) }
       : {}),
     ...(downloaded?.local_path ? { local_path: downloaded.local_path } : {}),
   };
+  if (locator.source !== primary.source) {
+    if (locator.is_playright_required === undefined) delete merged.is_playright_required;
+    else merged.is_playright_required = locator.is_playright_required;
+  }
+  return merged;
 }
 
 function deduplicateMaterials(materials: Material[]): Material[] {
@@ -454,7 +533,7 @@ export async function getMaterials(
   client: CanvasClient,
   session: BrowserSession,
   courseId: number,
-  sources: MaterialSource[] = ALL_SOURCES,
+  sources: MaterialSource[] = DEFAULT_SOURCES,
   cache?: FileCache,
 ): Promise<GetMaterialsResult> {
   const requested = uniqueSources(sources);
