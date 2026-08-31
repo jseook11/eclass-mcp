@@ -6,6 +6,15 @@ const BASE_URL = 'https://eclass3.cau.ac.kr';
 
 export type MaterialSource = 'modules' | 'files' | 'courseresource' | 'external' | 'modulebuilder' | 'announcements';
 
+function resolveMaterialUrl(rawUrl: string | null | undefined): string | null {
+  if (!rawUrl) return null;
+  try {
+    return new URL(rawUrl, BASE_URL).toString();
+  } catch {
+    return null;
+  }
+}
+
 export interface Material {
   id: string;
   title: string;
@@ -135,7 +144,7 @@ async function fetchModules(client: CanvasClient, courseId: number): Promise<Mat
         id: String(item.id),
         title: item.title,
         type: item.type,
-        url: item.html_url ? BASE_URL + item.html_url : null,
+        url: resolveMaterialUrl(item.html_url),
         source: 'modules',
         module_name: module.name,
       });
@@ -245,7 +254,7 @@ async function fetchExternal(client: CanvasClient, courseId: number): Promise<Ma
         id: String(item.id),
         title: item.title,
         type: 'ExternalTool',
-        url: item.html_url ? BASE_URL + item.html_url : null,
+        url: resolveMaterialUrl(item.html_url),
         source: 'external',
         module_name: module.name,
         is_playright_required: true,

@@ -99,6 +99,37 @@ test('getMaterials treats a not-started modulebuilder as an empty successful sou
   assert.deepEqual(result.errors, []);
 });
 
+test('getMaterials does not duplicate the Canvas host for absolute module URLs', async () => {
+  const client = mockClient(async () => [
+    {
+      id: 1,
+      name: 'Week 1',
+      items: [
+        {
+          id: 10,
+          title: 'lecture.pdf',
+          type: 'File',
+          html_url: 'https://eclass3.cau.ac.kr/courses/1/files/10',
+        },
+        {
+          id: 11,
+          title: 'lecture video',
+          type: 'ExternalTool',
+          html_url: 'https://eclass3.cau.ac.kr/courses/1/modules/items/11',
+        },
+      ],
+    },
+  ]);
+
+  const result = await getMaterials(client, mockSession(), 1, ['modules', 'external']);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.materials.map((material) => material.url), [
+    'https://eclass3.cau.ac.kr/courses/1/files/10',
+    'https://eclass3.cau.ac.kr/courses/1/modules/items/11',
+  ]);
+});
+
 test('getMaterials returns ok true when all sources succeed with no materials', async () => {
   const client = mockClient(async () => []);
 
