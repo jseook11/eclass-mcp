@@ -246,8 +246,33 @@ test('getMaterials merges the same opened weekly item from modulebuilder and ext
     source: 'modulebuilder',
     sources: ['modulebuilder', 'external'],
     module_name: '1주차',
+    is_playwright_required: true,
+    is_playwright_required: true,
     is_playright_required: true,
   });
+});
+
+test('getMaterials preserves ExternalTool type and both playwright flags for wrapper items', async () => {
+  const client = mockClient(async () => [
+    {
+      id: 1,
+      name: '1주차',
+      items: [{
+        id: 11,
+        title: 'week1 slides',
+        type: 'ExternalTool',
+        html_url: '/courses/1/modules/items/11',
+      }],
+    },
+  ]);
+
+  const result = await getMaterials(client, mockSession(), 1, ['external']);
+
+  assert.equal(result.materials.length, 1);
+  assert.equal(result.materials[0].type, 'ExternalTool');
+  assert.equal(result.materials[0].url, 'https://eclass3.cau.ac.kr/courses/1/modules/items/11');
+  assert.equal(result.materials[0].is_playwright_required, true);
+  assert.equal(result.materials[0].is_playright_required, true);
 });
 
 test('getMaterials merges Canvas file aliases across modules and announcements', async () => {

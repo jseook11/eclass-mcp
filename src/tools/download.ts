@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises';
 import { BrowserSession } from '../browser-session.js';
 import { FileCache } from '../file-cache.js';
+import type { ResolvedLocator } from '../file-cache.js';
 import {
   resolveDownloadStrategy,
   isPlaywrightStrategy,
@@ -9,6 +10,11 @@ import {
 import { downloadFileToDisk, validateCachedDownload } from './download-file.js';
 import { sanitizeDebug, isRetryableReason } from '../errors.js';
 import { sanitizeFileName } from '../utils.js';
+import {
+  isCanvasModuleItemUrl,
+  isExternalToolLaunchRequested,
+  isOcsViewerUrl,
+} from '../external-tool-launch.js';
 
 export interface DownloadItem {
   file_id: string;
@@ -17,6 +23,8 @@ export interface DownloadItem {
   display_name: string;
   type?: string | null;
   source?: string | null;
+  is_playwright_required?: boolean;
+  is_playright_required?: boolean;
 }
 
 export interface DownloadOutcome {
@@ -55,6 +63,95 @@ function failed(
   return { file_id: item.file_id, display_name: item.display_name, status: 'failed', strategy, error_code: errorCode, message, retryable };
 }
 
+function rememberLocator(cache: FileCache, locator: ResolvedLocator): void {
+  if (typeof cache.setResolvedLocator === 'function') {
+    cache.setResolvedLocator(locator);
+  }
+}
+
+async function resolveExternalToolLocator(deps: DownloadDeps, item: DownloadItem): Promise<ResolvedLocator> {
+  const cached = typeof deps.fileCache.getResolvedLocator === 'function'
+    ? deps.fileCache.getResolvedLocator(item.file_id)
+    : undefined;
+  if (cached?.resolved_url) return cached;
+
+  const currentUrl = item.url;
+  if (currentUrl && isOcsViewerUrl(currentUrl)) {
+    const locator: ResolvedLocator = {
+      file_id: item.file_id,
+      course_id: item.course_id,
+      resolved_url: currentUrl,
+      resolved_type: 'ocs',
+      display_name: item.display_name,
+      resolved_at: new Date().toISOString(),
+    };
+    rememberLocator(deps.fileCache, locator);
+    return locator;
+  }
+
+  if (currentUrl && !isCanvasModuleItemUrl(currentUrl) && !/\/external_tools\//.test(currentUrl)) {
+    const locator: ResolvedLocator = {
+      file_id: item.file_id,
+      course_id: item.course_id,
+      resolved_url: currentUrl,
+      resolved_type: item.type ?? null,
+      display_name: item.display_name,
+      resolved_at: new Date().toISOString(),
+    };
+    rememberLocator(deps.fileCache, locator);
+    return locator;
+  }
+
+  if (!currentUrl) {
+    throw new Error('ExternalTool launch requires a module item URL');
+  }
+
+  const artifact = await deps.session.resolveExternalToolLaunch(item.course_id, currentUrl);
+  const locator: ResolvedLocator = {
+    file_id: item.file_id,
+    course_id: item.course_id,
+    resolved_url: artifact.url,
+    resolved_type: artifact.type ?? null,
+    display_name: artifact.filename ?? item.display_name,
+    resolved_at: new Date().toISOString(),
+  };
+  rememberLocator(deps.fileCache, locator);
+  return locator;
+}
+
+async function downloadResolved(
+  deps: DownloadDeps,
+  item: DownloadItem,
+  safeName: string,
+  displayName: string,
+  resolvedUrl: string,
+  resolvedType?: string | null,
+): Promise<{ localPath: string; sizeBytes: number }> {
+  const transport = resolveDownloadStrategy(
+    resolvedUrl,
+    resolvedType === 'ocs' ? 'pdf' : resolvedType,
+    false,
+  );
+  if (transport === 'unsupported_streaming_media') {
+    throw new Error(
+      `파일 다운로드 도구는 동영상/스트리밍 자료를 처리하지 않습니다. OCS MP4 동영상은 eclass_download_video를 사용하세요: type=${resolvedType ?? ''}`,
+    );
+  }
+  if (isPlaywrightStrategy(transport) && transport !== 'external_tool_launch') {
+    const localPath = await deps.session.downloadCourseresourceFile(
+      item.course_id,
+      item.file_id,
+      safeName,
+      getDownloadDir(),
+      transport === 'ocs_intercept' ? resolvedUrl : undefined,
+    );
+    const stat = await fs.stat(localPath);
+    return { localPath, sizeBytes: stat.size };
+  }
+  const result = await downloadFileToDisk(item.course_id, resolvedUrl, displayName, deps.token);
+  return { localPath: result.local_path, sizeBytes: result.size_bytes };
+}
+
 /**
  * Unified single-material download. Validates the cache, resolves the transport
  * strategy, dispatches to the direct-fetch or Playwright path, records the
@@ -62,7 +159,11 @@ function failed(
  * expected failures — they come back as status 'failed'.
  */
 export async function downloadOne(deps: DownloadDeps, item: DownloadItem): Promise<DownloadOutcome> {
-  const strategy = resolveDownloadStrategy(item.url, item.type);
+  const strategy = resolveDownloadStrategy(
+    item.url,
+    item.type,
+    isExternalToolLaunchRequested(item),
+  );
 
   if (strategy === 'unsupported_streaming_media') {
     return failed(
@@ -95,7 +196,32 @@ export async function downloadOne(deps: DownloadDeps, item: DownloadItem): Promi
     let localPath: string;
     let sizeBytes: number;
 
-    if (isPlaywrightStrategy(strategy)) {
+    if (strategy === 'external_tool_launch') {
+      if (!item.url) {
+        localPath = await deps.session.downloadCourseresourceFile(
+          item.course_id,
+          item.file_id,
+          safeName,
+          getDownloadDir(),
+        );
+        const stat = await fs.stat(localPath);
+        sizeBytes = stat.size;
+      } else {
+        const locator = await resolveExternalToolLocator(deps, item);
+        const resolvedDisplayName = locator.display_name?.trim() || item.display_name;
+        const resolvedSafeName = sanitizeName(resolvedDisplayName) ?? safeName;
+        const downloaded = await downloadResolved(
+          deps,
+          item,
+          resolvedSafeName,
+          resolvedDisplayName,
+          locator.resolved_url,
+          locator.resolved_type,
+        );
+        localPath = downloaded.localPath;
+        sizeBytes = downloaded.sizeBytes;
+      }
+    } else if (isPlaywrightStrategy(strategy)) {
       localPath = await deps.session.downloadCourseresourceFile(
         item.course_id,
         item.file_id,

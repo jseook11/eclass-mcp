@@ -26,7 +26,9 @@
 | `file_id`(file/batch) / `video_id`(video) | `material.id` | ● |
 | `display_name` | `material.title` | ● |
 | `url` | `material.url` | C3 참조 |
-| `type` | `material.type` | 선택 |
+| `type` | `material.type` | 선택. `ExternalTool`이면 그대로 넘겨야 LTI 런치로 분류된다 |
+| `is_playwright_required` | `material.is_playwright_required` | ExternalTool/래퍼면 ● (같이 넘기지 않으면 eclass3 호스트가 `canvas_file`로 오인될 수 있음) |
+| `is_playright_required` | `material.is_playright_required` | 선택(오탈자 별칭, 둘 중 하나면 런치) |
 | `source` | `material.source` | 선택(넘기면 검색 캐시에 기록) |
 | `course_id` | 흐름의 course_id (C1) | ● |
 

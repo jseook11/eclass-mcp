@@ -294,7 +294,7 @@ MCP 서버 로컬 캐시에 다운로드된 파일 기록 검색. **네트워크
   - `courseresource`는 LearningX HTTP/API를 먼저 시도하고 실패 시 Playwright 인터셉트로
     폴백한다. `modulebuilder`는 아직 Playwright를 사용한다.
 - 출력: `{ ok, course_id, sources: { requested, succeeded, failed }, materials, errors, warnings }`
-  - material: `{ id, canvas_file_id?, title, type, url, source, sources?, url_source?, module_name?, is_playright_required?, is_downloaded?, local_path? }`
+  - material: `{ id, canvas_file_id?, title, type, url, source, sources?, url_source?, module_name?, is_playwright_required?, is_playright_required?, is_downloaded?, local_path? }`
   - 동일 source의 같은 ID, 동일 OCS 콘텐츠 URL, Canvas file URL 별칭, 같은 주차학습/외부도구 module item은 하나로 합친다. `source`는 의미 우선순위가 가장 높은 대표 출처이고, `sources`에는 합쳐진 모든 출처를 보존한다. 제목만 같은 서로 다른 ID는 합치지 않는다.
   - Canvas File module item은 `content_id`를 `canvas_file_id`로 보존해 module-item URL만 있어도 `files`/`announcements` 별칭과 합친다. 병합 후 `url`/`type`은 영상이면 OCS URL, 일반 파일이면 직접 다운로드 URL을 우선하며, URL 제공자가 대표 `source`와 다르면 `url_source`에 기록한다.
   - `modules`와 `external`을 함께 요청해도 공통 Canvas modules API는 한 번만 호출하고 결과를 유형별로 나눈다.
@@ -308,8 +308,9 @@ MCP 서버 로컬 캐시에 다운로드된 파일 기록 검색. **네트워크
 
 파일 1개를 MCP 서버 로컬 디스크/캐시에 다운로드. `eclass_get_materials` 결과 중 비동영상 파일 항목을 넘긴다. 이 도구는 ChatGPT에 파일 본문을 전달하지 않는다.
 
-- 입력: `{ file_id: string, course_id: number, url: string | null, display_name: string, type?: string }`
+- 입력: `{ file_id: string, course_id: number, url: string | null, display_name: string, type?: string, is_playwright_required?: boolean, is_playright_required?: boolean }`
   - `url`이 null이거나 `ocs.cau.ac.kr/em/` 뷰어 URL이면 Playwright 경로로 자동 처리.
+  - `type`이 `ExternalTool`이거나 `is_playwright_required`/`is_playright_required`가 true이면 Canvas 모듈 래퍼 URL을 LTI 런치(`external_tool_launch`)로 연 뒤 실제 파일을 찾는다. `is_playright_required`는 오탈자 별칭이다.
   - `type`이 영상 계열(mp4/m3u8/video 등)이면 파일 도구에서 거부된다. OCS MP4 동영상은 `eclass_download_video`를 사용한다.
 - 출력: `{ file_id, display_name, local_path, size_bytes, skipped, handoff_note }` — `skipped: true`면 캐시 히트로 다운로드 생략.
 - 저장 위치: `~/Downloads/eclass/{course_id}/` (env `ECLASS_DOWNLOAD_DIR`로 변경 가능).
@@ -320,7 +321,7 @@ MCP 서버 로컬 캐시에 다운로드된 파일 기록 검색. **네트워크
 
 여러 파일 자료를 MCP 서버 로컬 디스크/캐시에 한 번에 다운로드. **부분 성공** 지원 — 일부 실패해도 나머지는 계속 진행한다. 이 도구는 ChatGPT에 파일 본문을 전달하지 않는다. 동영상은 제외하고 `eclass_download_video`로 별도 처리한다.
 
-- 입력: `{ course_id: number, materials: [{ file_id, url?, display_name, type?, source? }], continue_on_error?: boolean = true }`
+  - 입력: `{ course_id: number, materials: [{ file_id, url?, display_name, type?, source?, is_playwright_required?, is_playright_required? }], continue_on_error?: boolean = true }`
   - `continue_on_error: false`면 첫 실패에서 중단.
   - 다운로드는 순차 처리 (eclass 부담·공유 Playwright 세션 안정성 때문).
   - 영상 계열 type은 실패 항목으로 반환되며 `eclass_download_video` 사용을 안내한다.
@@ -390,15 +391,16 @@ MCP 서버 로컬 캐시의 다운로드 기록 원본 목록. 파일 본문은 
 
 ## 다운로드 전략 (DownloadStrategy)
 
-`eclass_download_file`/`eclass_download_materials_batch`는 항목의 `url`/`type`을 보고 처리 방식을 자동 결정한다 (`src/download-strategy.ts`):
+`eclass_download_file`/`eclass_download_materials_batch`는 항목의 `url`/`type`/런치 플래그를 보고 처리 방식을 자동 결정한다 (`src/download-strategy.ts`). 타입과 `is_playwright_required`가 URL 호스트보다 우선한다.
 
 | strategy | 조건 | 처리 |
 |---|---|---|
 | `already_cached` | 캐시 히트 (file_id, 또는 파일명+크기+존재) | 다운로드 생략 (skipped) |
 | `unsupported_streaming_media` | 파일 다운로드 도구에 type이 mp4/m3u8/video 등으로 들어옴 | 실패 처리 (`DOWNLOAD_UNSUPPORTED_MEDIA`), `eclass_download_video` 안내 |
+| `external_tool_launch` | `type === 'ExternalTool'` 또는 `is_playwright_required`/`is_playright_required` | Playwright로 `/modules/items/{id}` LTI를 따라가 PDF/PPT/PPTX/OCS URL을 찾는다. LearningX 게시판이면 첫 게시물을 열어 Canvas 첨부파일까지 찾은 뒤, OCS면 `ocs_intercept`, 파일이면 직접 다운로드한다. 해결된 locator는 캐시되어 배치에서 재사용 |
 | `ocs_intercept` | url이 `ocs.cau.ac.kr/em/` 뷰어 | Playwright로 파일 응답 인터셉트 |
 | `playwright_ui` | url 없음 (courseresource) | Playwright LTI 경로 |
-| `canvas_file` | url이 `eclass3.cau.ac.kr` | 토큰으로 직접 fetch (리다이렉트 추적) |
+| `canvas_file` | url이 `eclass3.cau.ac.kr` (ExternalTool 래퍼 제외) | 토큰으로 직접 fetch (리다이렉트 추적) |
 | `direct_url` | 그 외 허용 origin | 직접 fetch |
 
 동영상 다운로드는 위 파일 DownloadStrategy와 별개로 `eclass_download_video`에서 `ocs_uniplayer_mp4` 전략을 사용한다.
@@ -407,7 +409,7 @@ MCP 서버 로컬 캐시의 다운로드 기록 원본 목록. 파일 본문은 
 
 ## 자주 쓰는 조합 흐름
 
-- **새 파일 자료 받기**: `eclass_get_courses_cached` → course_id 선택 → `eclass_get_materials` → 동영상이 아닌 `is_downloaded: false` 항목들을 `eclass_download_materials_batch`에 한 번에 넘김 (각 material의 `source`도 같이 넘기면 검색에 활용됨).
+- **새 파일 자료 받기**: `eclass_get_courses_cached` → course_id 선택 → `eclass_get_materials` → 동영상이 아닌 `is_downloaded: false` 항목들을 `eclass_download_materials_batch`에 한 번에 넘김 (각 material의 `source`·`type`·`is_playwright_required`도 같이 넘기면 ExternalTool 래퍼가 Canvas 파일로 오인되지 않음).
 - **동영상 받기**: `eclass_get_materials`에서 `type`이 mp4/video 계열이고 `url`이 `https://ocs.cau.ac.kr/em/...`인 항목 선택 → `eclass_download_video`.
 - **마감 임박 과제 확인**: `eclass_get_assignments { days_ahead: 7, include_submitted: false }`.
 - **문제 진단**: 툴 오류 발생 → `eclass_doctor` → 실패 check의 detail로 원인 판단 (인증이면 `pnpm run setup` 재실행 안내).

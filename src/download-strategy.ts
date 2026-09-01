@@ -8,23 +8,23 @@ export type DownloadStrategy =
   | 'direct_url'
   | 'ocs_intercept'
   | 'playwright_ui'
+  | 'external_tool_launch'
   | 'unsupported_streaming_media';
 
-const OCS_VIEWER_MARKER = 'ocs.cau.ac.kr/em/';
+export const OCS_VIEWER_MARKER = 'ocs.cau.ac.kr/em/';
 
 /**
- * Decides the transport strategy from a material's url and type. Mirrors the
- * branching previously inlined in index.ts:
- *  - streaming media types are unsupported
- *  - a null/empty url means a courseresource item that needs Playwright UI
- *  - an OCS viewer url is downloaded by intercepting the file response
- *  - an eclass3 url is a Canvas file (API redirect); anything else is a direct url
+ * Decides the transport strategy from a material's url, type, and launch flag.
+ * Type/flag beat URL host: ExternalTool wrapper pages on eclass3 are not
+ * Canvas files.
  */
 export function resolveDownloadStrategy(
   url: string | null | undefined,
   type?: string | null,
+  isPlaywrightRequired?: boolean,
 ): Exclude<DownloadStrategy, 'already_cached'> {
   if (isStreamingMediaType(type)) return 'unsupported_streaming_media';
+  if (isPlaywrightRequired || type === 'ExternalTool') return 'external_tool_launch';
   if (!url) return 'playwright_ui';
   if (url.includes(OCS_VIEWER_MARKER)) return 'ocs_intercept';
   try {
@@ -36,7 +36,7 @@ export function resolveDownloadStrategy(
 }
 
 export function isPlaywrightStrategy(strategy: DownloadStrategy): boolean {
-  return strategy === 'ocs_intercept' || strategy === 'playwright_ui';
+  return strategy === 'ocs_intercept' || strategy === 'playwright_ui' || strategy === 'external_tool_launch';
 }
 
 export function isDirectStrategy(strategy: DownloadStrategy): boolean {

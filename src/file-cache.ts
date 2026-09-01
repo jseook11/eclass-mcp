@@ -28,6 +28,15 @@ export interface SourceAccessDenial {
   reason: string;
 }
 
+export interface ResolvedLocator {
+  file_id: string;
+  course_id: number;
+  resolved_url: string;
+  resolved_type?: string | null;
+  display_name?: string | null;
+  resolved_at: string;
+}
+
 export class FileCache {
   private db: Database.Database;
 
@@ -59,6 +68,15 @@ export class FileCache {
         denied_until TEXT NOT NULL,
         reason      TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (course_id, source)
+      );
+
+      CREATE TABLE IF NOT EXISTS resolved_locators (
+        file_id       TEXT PRIMARY KEY,
+        course_id     INTEGER NOT NULL,
+        resolved_url  TEXT NOT NULL,
+        resolved_type TEXT,
+        display_name  TEXT,
+        resolved_at   TEXT NOT NULL
       )
     `);
 
@@ -118,17 +136,25 @@ export class FileCache {
   }
 
   remove(fileId: string): boolean {
-    const result = this.db
-      .prepare('DELETE FROM downloaded_files WHERE file_id = ?')
-      .run(fileId);
-    return result.changes > 0;
+    const removeDownloaded = this.db.prepare('DELETE FROM downloaded_files WHERE file_id = ?');
+    const removeLocator = this.db.prepare('DELETE FROM resolved_locators WHERE file_id = ?');
+    const tx = this.db.transaction((id: string) => {
+      const result = removeDownloaded.run(id);
+      removeLocator.run(id);
+      return result.changes > 0;
+    });
+    return tx(fileId);
   }
 
   removeCourse(courseId: number): number {
-    const result = this.db
-      .prepare('DELETE FROM downloaded_files WHERE course_id = ?')
-      .run(courseId);
-    return result.changes;
+    const removeDownloaded = this.db.prepare('DELETE FROM downloaded_files WHERE course_id = ?');
+    const removeLocators = this.db.prepare('DELETE FROM resolved_locators WHERE course_id = ?');
+    const tx = this.db.transaction((id: number) => {
+      const result = removeDownloaded.run(id);
+      removeLocators.run(id);
+      return result.changes;
+    });
+    return tx(courseId);
   }
 
   upsertCourses(courses: Array<{ id: number; name: string }>, fetchedAt: string = new Date().toISOString()): void {
@@ -202,5 +228,30 @@ export class FileCache {
     this.db
       .prepare('DELETE FROM source_access_denials WHERE course_id = ? AND source = ?')
       .run(courseId, source);
+  }
+
+  getResolvedLocator(fileId: string): ResolvedLocator | undefined {
+    return this.db
+      .prepare(`
+        SELECT file_id, course_id, resolved_url, resolved_type, display_name, resolved_at
+        FROM resolved_locators
+        WHERE file_id = ?
+      `)
+      .get(fileId) as ResolvedLocator | undefined;
+  }
+
+  setResolvedLocator(entry: ResolvedLocator): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO resolved_locators
+        (file_id, course_id, resolved_url, resolved_type, display_name, resolved_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.file_id,
+      entry.course_id,
+      entry.resolved_url,
+      entry.resolved_type ?? null,
+      entry.display_name ?? null,
+      entry.resolved_at,
+    );
   }
 }

@@ -32,6 +32,13 @@ import { debugLog } from './secrets.js';
 import { fetchCourseResourceViaApi } from './learningx-client.js';
 import { parseModulebuilderItems, parseResourceItems } from './resource-items.js';
 import { sanitizeFileName } from './utils.js';
+import {
+  isOcsViewerUrl,
+  resolveLaunchFromContext,
+  type LaunchArtifact,
+  type LaunchObservation,
+  type LtiPageSnapshot,
+} from './external-tool-launch.js';
 
 const BASE_URL = CANVAS_BASE_URL;
 const KEYCHAIN_SERVICE = 'eclass-mcp';
@@ -467,6 +474,231 @@ function isDownloadableResponse(response: Response): boolean {
   if (contentType.includes('application/zip')) return true;
   if (/\.(pdf|zip|doc|docx|ppt|pptx|xls|xlsx|hwp)(?:$|[?#])/i.test(url)) return true;
   return false;
+}
+
+async function readLtiPageSnapshot(page: Page): Promise<LtiPageSnapshot> {
+  const snapshots = await Promise.all(page.frames().map(async (frame) => {
+    try {
+      return await frame.evaluate(() => {
+        const forms = Array.from(document.querySelectorAll('form')).map((form) => ({
+          id: form.id || undefined,
+          action: form.getAttribute('action') || form.action || '',
+          method: (form.getAttribute('method') || form.method || 'get').toLowerCase(),
+        }));
+        const iframes = Array.from(document.querySelectorAll('iframe'))
+          .map((iframe) => iframe.getAttribute('src'))
+          .filter((src): src is string => Boolean(src && src.trim()));
+        return { url: location.href, forms, iframes };
+      });
+    } catch {
+      return { url: frame.url(), forms: [] as LtiPageSnapshot['forms'], iframes: [] as string[] };
+    }
+  }));
+
+  return {
+    url: page.url(),
+    forms: snapshots.flatMap((snapshot) => snapshot.forms),
+    iframes: snapshots.flatMap((snapshot) => snapshot.iframes),
+  };
+}
+
+async function submitLtiForm(page: Page, selector: string): Promise<void> {
+  const trySubmit = async (root: Page | Frame): Promise<boolean> => {
+    const locator = root.locator(selector).first();
+    if (await locator.count() === 0) return false;
+    await locator.evaluate((form) => {
+      if (form instanceof HTMLFormElement) form.submit();
+    });
+    return true;
+  };
+
+  if (await trySubmit(page)) return;
+  for (const frame of page.frames()) {
+    if (await trySubmit(frame)) return;
+  }
+  throw new Error(`LTI form not found: ${selector}`);
+}
+
+interface LearningxBoardAttachment {
+  filename?: string;
+  url?: string;
+  canvas_file_id?: number | string;
+}
+
+interface LearningxBoardPostDetail {
+  attachments?: LearningxBoardAttachment[];
+}
+
+export interface LearningxBoardLocation {
+  boardId: string;
+  postId?: string;
+}
+
+interface LearningxBoardContext extends LearningxBoardLocation {
+  frame: Frame;
+  url: string;
+}
+
+interface CapturedLearningxBoardDetail extends LearningxBoardLocation {
+  courseId: number;
+  body: Promise<unknown | null>;
+}
+
+export function parseLearningxBoardLocation(rawUrl: string): LearningxBoardLocation | null {
+  try {
+    const url = new URL(rawUrl);
+    if (url.origin !== BASE_URL) return null;
+    const match = url.pathname.match(
+      /^\/learningx\/lti\/learningx_board\/boards\/(\d+)(?:\/posts\/(\d+))?\/?$/,
+    );
+    if (!match) return null;
+    return { boardId: match[1], ...(match[2] ? { postId: match[2] } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+function parseLearningxBoardApiLocation(rawUrl: string): (LearningxBoardLocation & { courseId: number }) | null {
+  try {
+    const url = new URL(rawUrl);
+    if (url.origin !== BASE_URL) return null;
+    const match = url.pathname.match(
+      /^\/learningx\/api\/v1\/learningx_board\/courses\/(\d+)\/boards\/(\d+)\/posts\/(\d+)\/?$/,
+    );
+    if (!match) return null;
+    return { courseId: Number(match[1]), boardId: match[2], postId: match[3] };
+  } catch {
+    return null;
+  }
+}
+
+function boardContextFromPage(page: Page): LearningxBoardContext | null {
+  for (const frame of page.frames()) {
+    const location = parseLearningxBoardLocation(frame.url());
+    if (location) return { frame, url: frame.url(), ...location };
+  }
+  return null;
+}
+
+function filenameExtension(filename: string): string | undefined {
+  const match = /\.([a-z0-9]+)$/i.exec(filename.trim());
+  return match?.[1].toLowerCase();
+}
+
+function canvasFileIdFromUrl(rawUrl: string): string | null {
+  try {
+    const match = new URL(rawUrl).pathname.match(/\/files\/(\d+)(?:\/download)?\/?$/);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseLearningxBoardPostAttachment(body: unknown): LaunchArtifact | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const detail = body as LearningxBoardPostDetail;
+  if (!Array.isArray(detail.attachments)) return null;
+
+  for (const attachment of detail.attachments) {
+    if (!attachment || typeof attachment !== 'object') continue;
+    if (typeof attachment.url !== 'string' || typeof attachment.filename !== 'string') continue;
+    const filename = attachment.filename.trim();
+    if (!filename) continue;
+    let attachmentUrl: URL;
+    try {
+      attachmentUrl = new URL(attachment.url, BASE_URL);
+    } catch {
+      continue;
+    }
+    if (attachmentUrl.origin !== BASE_URL) continue;
+    const fileId = attachment.canvas_file_id !== undefined
+      ? String(attachment.canvas_file_id)
+      : canvasFileIdFromUrl(attachmentUrl.toString());
+    if (!fileId || !/^\d+$/.test(fileId)) continue;
+
+    return {
+      kind: 'file',
+      url: attachmentUrl.toString(),
+      type: filenameExtension(filename),
+      filename,
+    };
+  }
+
+  return null;
+}
+
+async function findCapturedBoardAttachment(
+  captures: CapturedLearningxBoardDetail[],
+  courseId: number,
+  boardId: string,
+  postId?: string,
+): Promise<{ found: boolean; artifact: LaunchArtifact | null }> {
+  const matches = captures.filter((capture) => (
+    capture.courseId === courseId
+    && capture.boardId === boardId
+    && (!postId || capture.postId === postId)
+  ));
+  if (matches.length === 0) return { found: false, artifact: null };
+
+  let parsedResponse = false;
+  for (const capture of matches.slice().reverse()) {
+    const body = await capture.body;
+    if (body === null) continue;
+    parsedResponse = true;
+    const artifact = parseLearningxBoardPostAttachment(body);
+    if (artifact) return { found: true, artifact };
+  }
+  return { found: parsedResponse, artifact: null };
+}
+
+async function resolveLearningxBoardAttachment(
+  page: Page,
+  courseId: number,
+  captures: CapturedLearningxBoardDetail[],
+): Promise<LaunchArtifact | null | undefined> {
+  const boardContext = boardContextFromPage(page);
+  if (!boardContext) return undefined;
+  const { boardId, postId } = boardContext;
+
+  const captured = await findCapturedBoardAttachment(captures, courseId, boardId, postId);
+  if (captured.artifact) return captured.artifact;
+  if (postId) return captured.found ? null : undefined;
+
+  const initialRows = boardContext.frame.locator('table tbody tr');
+  const rowCount = await initialRows.count();
+  if (rowCount === 0) return undefined;
+
+  const listUrl = boardContext.url;
+  for (let index = 0; index < rowCount; index += 1) {
+    const current = boardContextFromPage(page);
+    if (!current || current.boardId !== boardId || current.postId) return undefined;
+    const rows = current.frame.locator('table tbody tr');
+    if (await rows.count() <= index) return undefined;
+
+    const detailResponse = page.waitForResponse(
+      (response: Response) => {
+        const location = parseLearningxBoardApiLocation(response.url());
+        return response.ok()
+          && location?.courseId === courseId
+          && location.boardId === boardId;
+      },
+      { timeout: 15000 },
+    );
+    detailResponse.catch(() => undefined);
+    await rows.nth(index).locator('td').nth(1).click();
+    const response = await detailResponse;
+    const artifact = parseLearningxBoardPostAttachment(await response.json() as unknown);
+    if (artifact) return artifact;
+
+    if (index < rowCount - 1) {
+      const detailContext = boardContextFromPage(page);
+      if (!detailContext || detailContext.boardId !== boardId) return undefined;
+      await detailContext.frame.goto(listUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+      await detailContext.frame.locator('table tbody tr').first().waitFor({ state: 'visible', timeout: 15000 });
+    }
+  }
+
+  return null;
 }
 
 export function buildOcsCaptureFailureMessage(details: OcsCaptureFailureDetails): string {
@@ -1308,6 +1540,89 @@ export class BrowserSession {
       }
 
       throw new Error(`Resource ${resourceId} has no viewUrl — cannot download without OCS viewer URL`);
+    });
+  }
+
+  /**
+   * Opens a Canvas ExternalTool module item, follows the LTI launch
+   * (auto-POST form, iframe, or popup), and returns the first PDF/PPT/PPTX
+   * or OCS viewer locator. Does not download the file.
+   */
+  async resolveExternalToolLaunch(courseId: number, moduleItemUrl: string): Promise<LaunchArtifact> {
+    await this.ensurePlaywrightReady();
+    await this.getClient();
+    assertAllowedOrigin(moduleItemUrl, 'moduleItemUrl');
+
+    return this.withAuthenticatedContext('external tool launch', { acceptDownloads: true }, async (context) => {
+      const page = await context.newPage();
+      const observations: LaunchObservation[] = [];
+      const boardDetails: CapturedLearningxBoardDetail[] = [];
+
+      const recordObservation = (observation: LaunchObservation): void => {
+        if (!isTrackedBrowserUrl(observation.url) && !isOcsViewerUrl(observation.url)) return;
+        observations.push(observation);
+      };
+
+      const attachPage = (target: Page, source: 'response' | 'popup'): void => {
+        target.on('response', (response: Response) => {
+          const boardLocation = parseLearningxBoardApiLocation(response.url());
+          if (response.ok() && boardLocation) {
+            boardDetails.push({
+              ...boardLocation,
+              body: response.json().catch(() => null),
+            });
+          }
+          recordObservation({
+            source: source === 'popup' ? 'popup' : 'response',
+            url: response.url(),
+            status: response.status(),
+            contentType: response.headers()['content-type'],
+            contentDisposition: response.headers()['content-disposition'],
+          });
+        });
+        target.on('framenavigated', (frame: Frame) => {
+          const frameUrl = frame.url();
+          if (!frameUrl) return;
+          recordObservation({
+            source: frame === target.mainFrame() ? 'navigation' : 'iframe',
+            url: frameUrl,
+          });
+        });
+        target.on('download', (download) => {
+          recordObservation({
+            source: 'download',
+            url: download.url(),
+            filename: download.suggestedFilename(),
+          });
+        });
+      };
+
+      attachPage(page, 'response');
+      context.on('page', (spawnedPage: Page) => {
+        recordObservation({ source: 'popup', url: spawnedPage.url() || moduleItemUrl });
+        attachPage(spawnedPage, 'popup');
+      });
+
+      return resolveLaunchFromContext({
+        moduleItemUrl,
+        goto: async (url) => {
+          debugLog('browser-session', `Launching ExternalTool ${url} for course ${courseId}`);
+          await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          if (isSsoLoginUrl(page.url())) {
+            throw sessionRedirectError(page.url());
+          }
+          recordObservation({ source: 'navigation', url: page.url() });
+        },
+        readSnapshot: async () => readLtiPageSnapshot(page),
+        submitForm: async (selector) => {
+          await submitLtiForm(page, selector);
+        },
+        observations: () => observations,
+        resolveBoardAttachment: async () => resolveLearningxBoardAttachment(page, courseId, boardDetails),
+        wait: async () => {
+          await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
+        },
+      });
     });
   }
 

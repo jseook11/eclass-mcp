@@ -10,10 +10,49 @@ import {
   isSsoLoginUrl,
   listCanvasTokensFromAuthenticatedPage,
   parseCachedSessionCredential,
+  parseLearningxBoardLocation,
+  parseLearningxBoardPostAttachment,
   redactBrowserDiagnostic,
   revokeCanvasTokenFromAuthenticatedPage,
 } from '../src/browser-session.js';
 import { CANVAS_JSON_ACCEPT } from '../src/canvas-token-lifecycle.js';
+
+test('LearningX board location parser accepts list and post-detail routes only', () => {
+  assert.deepEqual(
+    parseLearningxBoardLocation('https://eclass3.cau.ac.kr/learningx/lti/learningx_board/boards/77'),
+    { boardId: '77' },
+  );
+  assert.deepEqual(
+    parseLearningxBoardLocation('https://eclass3.cau.ac.kr/learningx/lti/learningx_board/boards/77/posts/901'),
+    { boardId: '77', postId: '901' },
+  );
+  assert.equal(
+    parseLearningxBoardLocation('https://attacker.example/learningx/lti/learningx_board/boards/77/posts/901'),
+    null,
+  );
+});
+
+test('LearningX board post parser selects a valid same-origin Canvas attachment', () => {
+  assert.deepEqual(parseLearningxBoardPostAttachment({
+    attachments: [
+      { filename: 'bad.pdf', url: 'https://attacker.example/files/1/download', canvas_file_id: 1 },
+      { filename: '  2026-02, 01.pdf  ', url: '/files/10683786/download?verifier=redacted' },
+    ],
+  }), {
+    kind: 'file',
+    url: 'https://eclass3.cau.ac.kr/files/10683786/download?verifier=redacted',
+    type: 'pdf',
+    filename: '2026-02, 01.pdf',
+  });
+});
+
+test('LearningX board post parser rejects malformed attachment payloads', () => {
+  assert.equal(parseLearningxBoardPostAttachment(null), null);
+  assert.equal(parseLearningxBoardPostAttachment({ attachments: 'not-an-array' }), null);
+  assert.equal(parseLearningxBoardPostAttachment({
+    attachments: [{ filename: 'missing-file-id.pdf', url: '/courses/1' }],
+  }), null);
+});
 
 test('browser token creation submits relative and absolute CAU profile form actions', async () => {
   const baseUrl = 'https://eclass3.cau.ac.kr';

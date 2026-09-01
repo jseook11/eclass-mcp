@@ -27,6 +27,8 @@ export interface Material {
   /** Source that supplied `url` when it differs from the representative source. */
   url_source?: MaterialSource;
   module_name?: string;
+  is_playwright_required?: boolean;
+  /** @deprecated typo kept for callers that still send the misspelled flag */
   is_playright_required?: boolean;
   is_downloaded?: boolean;
   local_path?: string;
@@ -145,6 +147,15 @@ function clearFilesDenial(courseId: number, cache?: FileCache): void {
   }
 }
 
+function withPlaywrightRequired(material: Material, required: boolean): Material {
+  if (!required) return material;
+  return {
+    ...material,
+    is_playwright_required: true,
+    is_playright_required: true,
+  };
+}
+
 async function fetchModules(loadModules: () => Promise<RawModule[]>): Promise<Material[]> {
   const raw = await loadModules();
   const materials: Material[] = [];
@@ -201,7 +212,7 @@ async function fetchCourseresource(session: BrowserSession, courseId: number): P
     type: item.type || 'resource',
     url: item.url,
     source: 'courseresource' as MaterialSource,
-    is_playright_required: !item.url,
+    ...(item.url ? {} : { is_playwright_required: true, is_playright_required: true }),
   }));
 }
 
@@ -245,14 +256,13 @@ async function fetchAnnouncements(client: CanvasClient, courseId: number): Promi
 
 async function fetchModulebuilder(session: BrowserSession, courseId: number): Promise<Material[]> {
   const items = await session.interceptModulebuilder(courseId);
-  return items.map((item) => ({
+  return items.map((item) => withPlaywrightRequired({
     id: item.id,
     title: item.title,
     type: item.type || 'pdf',
     url: item.url,
     source: 'modulebuilder' as MaterialSource,
-    is_playright_required: true,
-  }));
+  }, true));
 }
 
 async function fetchExternal(loadModules: () => Promise<RawModule[]>): Promise<Material[]> {
@@ -261,15 +271,14 @@ async function fetchExternal(loadModules: () => Promise<RawModule[]>): Promise<M
   for (const module of raw) {
     for (const item of module.items ?? []) {
       if (item.type !== 'ExternalTool') continue;
-      materials.push({
+      materials.push(withPlaywrightRequired({
         id: String(item.id),
         title: item.title,
         type: 'ExternalTool',
         url: resolveMaterialUrl(item.html_url),
         source: 'external',
         module_name: module.name,
-        is_playright_required: true,
-      });
+      }, true));
     }
   }
   return materials;
@@ -435,8 +444,12 @@ function mergeMaterialGroup(group: Material[]): Material {
     ...(downloaded?.local_path ? { local_path: downloaded.local_path } : {}),
   };
   if (locator.source !== primary.source) {
-    if (locator.is_playright_required === undefined) delete merged.is_playright_required;
-    else merged.is_playright_required = locator.is_playright_required;
+    delete merged.is_playwright_required;
+    delete merged.is_playright_required;
+  }
+  if (group.some((material) => material.is_playwright_required || material.is_playright_required)) {
+    merged.is_playwright_required = true;
+    merged.is_playright_required = true;
   }
   return merged;
 }

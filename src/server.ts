@@ -90,6 +90,8 @@ const GetDownloadFileSchema = z.object({
   url: z.string().url().nullable().optional(),  // null for courseresource files (Playwright download)
   display_name: z.string().min(1).max(512),
   type: z.string().min(1).max(256).optional(),
+  is_playwright_required: z.boolean().optional(),
+  is_playright_required: z.boolean().optional(),
 });
 
 const ListDownloadsSchema = z.object({
@@ -143,6 +145,8 @@ const DownloadBatchSchema = z.object({
     display_name: z.string().min(1).max(512),
     type: z.string().min(1).max(256).optional(),
     source: z.string().min(1).max(64).optional(),
+    is_playwright_required: z.boolean().optional(),
+    is_playright_required: z.boolean().optional(),
   })).min(1).max(200),
   continue_on_error: z.boolean().optional().default(true),
 });
@@ -448,7 +452,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             course_id: { type: 'number', description: '강의 ID' },
             url: { type: 'string', description: '다운로드 URL (courseresource 파일은 null 허용 — Playwright로 다운로드)' },
             display_name: { type: 'string', description: '저장할 파일명' },
-            type: { type: 'string', description: '자료 유형. mp4/video/m3u8 계열은 파일 도구에서 거부되며 eclass_download_video 대상입니다.' },
+            type: { type: 'string', description: '자료 유형. ExternalTool은 LTI 런치 후 실제 파일을 찾습니다. mp4/video/m3u8 계열은 파일 도구에서 거부되며 eclass_download_video 대상입니다.' },
+            is_playwright_required: { type: 'boolean', description: 'true면 eclass3 래퍼 URL이어도 ExternalTool LTI 런치로 처리합니다.' },
+            is_playright_required: { type: 'boolean', description: 'is_playwright_required의 이전 오탈자 별칭. 둘 중 하나면 런치 경로를 탑니다.' },
           },
           required: ['file_id', 'course_id', 'url', 'display_name'],
         },
@@ -468,8 +474,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                   file_id: { type: 'string' },
                   url: { type: 'string', description: 'null/생략 시 courseresource(Playwright) 경로' },
                   display_name: { type: 'string' },
-                  type: { type: 'string', description: 'mp4/video 계열은 파일 도구에서 실패 처리되며 eclass_download_video 대상' },
+                  type: { type: 'string', description: 'ExternalTool이면 LTI 런치. mp4/video 계열은 파일 도구에서 실패 처리되며 eclass_download_video 대상' },
                   source: { type: 'string', description: '자료 출처 (캐시에 기록됨)' },
+                  is_playwright_required: { type: 'boolean' },
+                  is_playright_required: { type: 'boolean', description: 'is_playwright_required 오탈자 별칭' },
                 },
                 required: ['file_id', 'display_name'],
               },
@@ -768,6 +776,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             url: parsed.url ?? null,
             display_name: parsed.display_name,
             type: parsed.type,
+            is_playwright_required: parsed.is_playwright_required,
+            is_playright_required: parsed.is_playright_required,
           },
         );
 
@@ -807,6 +817,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             display_name: m.display_name,
             type: m.type,
             source: m.source,
+            is_playwright_required: m.is_playwright_required,
+            is_playright_required: m.is_playright_required,
           })),
           parsed.continue_on_error,
         );
